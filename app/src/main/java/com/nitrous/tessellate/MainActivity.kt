@@ -1,6 +1,5 @@
 package com.nitrous.tessellate
 
-import android.app.Activity
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
@@ -25,6 +24,8 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.core.content.res.ResourcesCompat
 import com.nitrous.tessellate.core.AppState
 import com.nitrous.tessellate.graphics.TessellateSurfaceView
@@ -34,7 +35,7 @@ import com.nitrous.tessellate.ui.CreateWorldField
  * Application entry point hosting the OpenGL ES 3.0 rendering surface, Android lifecycle hooks,
  * collapsible developer command console overlay, and text input bridges for Create World.
  */
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     var surfaceView: TessellateSurfaceView? = null
         private set
@@ -59,6 +60,7 @@ class MainActivity : Activity() {
 
     private var isSyncingCreateWorldInputs: Boolean = false
     private var lastObservedState: AppState? = null
+    private lateinit var backPressedCallback: OnBackPressedCallback
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,6 +121,12 @@ class MainActivity : Activity() {
                 }
             }
         }
+        backPressedCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                handleBackNavigation(this)
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, backPressedCallback)
         updateUiOverlaysForState(glView.engine.currentAppState, glView.engine.isPaused)
     }
 
@@ -163,6 +171,7 @@ class MainActivity : Activity() {
         }
 
         lastObservedState = state
+        refreshBackCallbackEnabled()
     }
 
     private fun resolvePixelTypeface(style: Int = Typeface.NORMAL): Typeface {
@@ -479,6 +488,7 @@ class MainActivity : Activity() {
     fun openCommandConsole() {
         consoleToggleButton.visibility = View.GONE
         consoleOverlayContainer.visibility = View.VISIBLE
+        refreshBackCallbackEnabled()
         consoleInputEditText.requestFocus()
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.showSoftInput(consoleInputEditText, InputMethodManager.SHOW_IMPLICIT)
@@ -489,6 +499,7 @@ class MainActivity : Activity() {
         imm?.hideSoftInputFromWindow(consoleInputEditText.windowToken, 0)
         consoleOverlayContainer.visibility = View.GONE
         consoleToggleButton.visibility = View.VISIBLE
+        refreshBackCallbackEnabled()
         enableImmersiveMode()
     }
 
@@ -515,16 +526,22 @@ class MainActivity : Activity() {
         }
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
+    private fun refreshBackCallbackEnabled() {
+        if (!::backPressedCallback.isInitialized) return
         val engine = surfaceView?.engine
+        val consoleOpen = ::consoleOverlayContainer.isInitialized && consoleOverlayContainer.visibility == View.VISIBLE
+        backPressedCallback.isEnabled = consoleOpen || (engine != null && engine.currentAppState != AppState.MENU)
+    }
+
+    private fun handleBackNavigation(callback: OnBackPressedCallback) {
+        val engine = surfaceView?.engine
+        if (consoleOverlayContainer.visibility == View.VISIBLE) {
+            closeCommandConsole()
+            return
+        }
         if (engine != null) {
-            if (consoleOverlayContainer.visibility == View.VISIBLE) {
-                closeCommandConsole()
-                return
-            }
             when (engine.currentAppState) {
-                AppState.SETTINGS -> {
+                AppState.SETTINGS, AppState.DEBUG_OPTIONS -> {
                     engine.navigateBackFromSettings()
                     return
                 }
@@ -537,18 +554,15 @@ class MainActivity : Activity() {
                     return
                 }
                 AppState.PLAYING -> {
-                    if (engine.isPaused) {
-                        engine.setPaused(false)
-                    } else {
-                        engine.setPaused(true)
-                    }
+                    engine.setPaused(!engine.isPaused)
                     return
                 }
                 AppState.MENU -> Unit
             }
         }
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
+        callback.isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
+        refreshBackCallbackEnabled()
     }
 
     private fun enableImmersiveMode() {

@@ -1,13 +1,17 @@
 package com.nitrous.tessellate.world
 
 import android.opengl.GLES30
+import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.graphics.Frustum
 import com.nitrous.tessellate.graphics.Matrix4
 import com.nitrous.tessellate.graphics.Shader
+import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.texture.TexturePipeline
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Manages chunk GPU meshes, frustum culling, block outline highlights, and atlas-based batch rendering.
+ * Manages chunk GPU meshes, frustum culling, block outline highlights, entity hitboxes,
+ * safe GPU resource flushing, and atlas-based batch rendering.
  */
 class WorldRenderer(
     initialWorld: World
@@ -16,11 +20,22 @@ class WorldRenderer(
     var world: World = initialWorld
         private set
 
+    @Volatile
+    var showHitboxes: Boolean = false
+
+    @Volatile
+    private var pendingGpuFlush: Boolean = false
+
+    val gpuFlushCount = AtomicInteger(0)
+
     private val meshSwapLock = Any()
     private val chunkMeshMap = LinkedHashMap<ChunkPos, ChunkMesh>()
     private val chunkMeshes = mutableListOf<ChunkMesh>()
     private val visibleChunkMeshes = mutableListOf<ChunkMesh>()
     private val pendingReleaseMeshes = mutableListOf<ChunkMesh>()
+    private val dirtyQueueScratch = mutableListOf<ChunkMesh>()
+    private var syncedWorldRef: World? = null
+    private var syncedTopologyVersion: Long = -1L
     private val frustum = Frustum()
     private var worldShader: Shader? = null
     private var highlightShader: Shader? = null
@@ -41,6 +56,50 @@ class WorldRenderer(
 
     fun getChunkMeshes(): List<ChunkMesh> = synchronized(meshSwapLock) { chunkMeshes.toList() }
 
+    /**
+     * Thread-safe deferred request to flush and rebuild chunk GPU buffers at the next safe
+     * GL-thread frame boundary, without destroying resources currently in use mid-draw.
+     */
+    fun requestSafeGpuFlush() {
+        pendingGpuFlush = true
+    }
+
+    fun isGpuFlushPending(): Boolean = pendingGpuFlush
+
+    fun processPendingGpuFlushIfSafe(
+        texturePipeline: TexturePipeline? = null,
+        isGlThread: Boolean = true
+    ): Boolean {
+        if (!pendingGpuFlush) return false
+        pendingGpuFlush = false
+
+        synchronized(meshSwapLock) {
+            if (isGlThread) {
+                for (mesh in pendingReleaseMeshes) {
+                    mesh.release()
+                }
+                pendingReleaseMeshes.clear()
+                for (mesh in chunkMeshes) {
+                    mesh.release()
+                    if (!mesh.chunk.isEmpty) {
+                        mesh.chunk.markDirty()
+                    }
+                }
+            } else {
+                for (mesh in chunkMeshes) {
+                    if (!mesh.chunk.isEmpty) {
+                        mesh.chunk.markDirty()
+                    }
+                }
+            }
+        }
+        if (isGlThread) {
+            texturePipeline?.reloadAll()
+        }
+        gpuFlushCount.incrementAndGet()
+        return true
+    }
+
     init {
         syncWithWorld(initGlBuffers = false)
     }
@@ -55,6 +114,8 @@ class WorldRenderer(
             chunkMeshMap.clear()
             chunkMeshes.clear()
             visibleChunkMeshes.clear()
+            syncedWorldRef = null
+            syncedTopologyVersion = -1L
             world = newWorld
         }
         syncWithWorld(initGlBuffers = false)
@@ -62,10 +123,16 @@ class WorldRenderer(
 
     fun syncWithWorld(initGlBuffers: Boolean = false) {
         val currentWorld = world
+        val currentVersion = currentWorld.chunkTopologyVersion.get()
+        if (!initGlBuffers && syncedWorldRef === currentWorld && syncedTopologyVersion == currentVersion) {
+            return
+        }
+
         val loadedChunks = currentWorld.getAllChunks()
         val activePositions = HashSet<ChunkPos>(loadedChunks.size)
 
         synchronized(meshSwapLock) {
+            if (world !== currentWorld) return
             var changed = false
 
             for (c in loadedChunks) {
@@ -108,11 +175,15 @@ class WorldRenderer(
                 chunkMeshes.clear()
                 chunkMeshes.addAll(chunkMeshMap.values)
             }
+            syncedWorldRef = currentWorld
+            syncedTopologyVersion = currentVersion
         }
     }
 
     fun initGl() {
         releaseWorldShadersAndHighlight()
+        syncedWorldRef = null
+        syncedTopologyVersion = -1L
         syncWithWorld(initGlBuffers = false)
         val vertexSource = """
             #version 300 es
@@ -237,9 +308,10 @@ class WorldRenderer(
         val highlightFs = """
             #version 300 es
             precision mediump float;
+            uniform vec4 uColor;
             out vec4 fragColor;
             void main() {
-                fragColor = vec4(1.0, 0.9, 0.2, 0.85); // Glowing gold selector line
+                fragColor = uColor;
             }
         """.trimIndent()
 
@@ -250,9 +322,17 @@ class WorldRenderer(
 
     /**
      * Syncs chunk meshes with dynamically streamed chunks and updates dirty/pending GPU meshes.
+     * When [uploadToGpu] is true (live GL render loop), applies a per-frame rebuild/upload budget
+     * prioritized nearest to ([focusX], [focusZ]) so chunk streaming never freezes the render thread.
      */
-    fun updateMeshes(texturePipeline: TexturePipeline, uploadToGpu: Boolean = true) {
+    fun updateMeshes(
+        texturePipeline: TexturePipeline,
+        uploadToGpu: Boolean = true,
+        focusX: Float = 0f,
+        focusZ: Float = 0f
+    ) {
         if (uploadToGpu) {
+            processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
             val toRelease = synchronized(meshSwapLock) {
                 if (pendingReleaseMeshes.isEmpty()) {
                     emptyList()
@@ -265,27 +345,99 @@ class WorldRenderer(
             }
         }
 
-        syncWithWorld(initGlBuffers = uploadToGpu)
-
         val currentWorld = world
-        val snapshot = synchronized(meshSwapLock) { chunkMeshes.toList() }
-        var rendered = 0
-        var culled = 0
-        for (mesh in snapshot) {
-            if (mesh.chunk.needsMeshRebuild) {
+        val prevTopology = syncedTopologyVersion
+        syncWithWorld(initGlBuffers = false)
+        val topologyChanged = prevTopology != syncedTopologyVersion
+
+        dirtyQueueScratch.clear()
+        synchronized(meshSwapLock) {
+            for (i in 0 until chunkMeshes.size) {
+                val mesh = chunkMeshes[i]
+                val prebuiltAvailable = mesh.rebuildCount == 0 && !mesh.chunk.isEmpty
+                if (mesh.chunk.needsMeshRebuild || (uploadToGpu && mesh.hasPendingGpuUpload) || prebuiltAvailable) {
+                    dirtyQueueScratch.add(mesh)
+                }
+            }
+        }
+
+        if (dirtyQueueScratch.isEmpty() && !topologyChanged) {
+            return
+        }
+
+        if (uploadToGpu && dirtyQueueScratch.size > 1) {
+            dirtyQueueScratch.sortBy { mesh ->
+                val cx = mesh.chunk.chunkX * Chunk.SIZE + 8f - focusX
+                val cz = mesh.chunk.chunkZ * Chunk.SIZE + 8f - focusZ
+                cx * cx + cz * cz
+            }
+        }
+
+        val maxCount = if (uploadToGpu) MAX_MESH_UPLOADS_PER_FRAME else Int.MAX_VALUE
+        val startNs = if (uploadToGpu) System.nanoTime() else 0L
+        var processed = 0
+        var anyUpdated = false
+
+        for (i in 0 until dirtyQueueScratch.size) {
+            if (processed >= maxCount) break
+            if (uploadToGpu && processed > 0 && (System.nanoTime() - startNs) >= MAX_MESH_BUDGET_NS) {
+                break
+            }
+
+            var mesh = dirtyQueueScratch[i]
+            val c = mesh.chunk
+            val pos = ChunkPos(c.chunkX, c.chunkY, c.chunkZ)
+
+            // Check if the background streaming thread finished a prebuilt CPU mesh for this chunk
+            val prebuilt = currentWorld.consumePrebuiltMesh(pos)
+            if (prebuilt != null && prebuilt.chunk === c && prebuilt.rebuildCount > 0 && !c.needsMeshRebuild) {
+                synchronized(meshSwapLock) {
+                    val currentInMap = chunkMeshMap[pos]
+                    if (currentInMap === mesh) {
+                        chunkMeshMap[pos] = prebuilt
+                        val idx = chunkMeshes.indexOf(mesh)
+                        if (idx >= 0) {
+                            chunkMeshes[idx] = prebuilt
+                        }
+                        if (uploadToGpu) {
+                            pendingReleaseMeshes.add(mesh)
+                        }
+                        mesh = prebuilt
+                    }
+                }
+            }
+
+            if (c.needsMeshRebuild) {
                 if (uploadToGpu) {
                     mesh.buildMesh(currentWorld, texturePipeline)
                 } else {
                     mesh.generateMeshData(currentWorld, texturePipeline)
                 }
+                anyUpdated = true
+                if (!c.isEmpty || mesh.generatedFacesCount > 0) {
+                    processed++
+                }
             } else if (uploadToGpu && mesh.hasPendingGpuUpload) {
                 mesh.uploadCpuMeshToGpu()
+                anyUpdated = true
+                processed++
             }
-            rendered += mesh.generatedFacesCount
-            culled += mesh.culledFacesCount
         }
-        totalRenderedFaces = rendered
-        totalCulledFaces = culled
+        dirtyQueueScratch.clear()
+
+        if (anyUpdated || topologyChanged) {
+            var rendered = 0
+            var culled = 0
+            synchronized(meshSwapLock) {
+                for (i in 0 until chunkMeshes.size) {
+                    val m = chunkMeshes[i]
+                    rendered += m.generatedFacesCount
+                    culled += m.culledFacesCount
+                }
+            }
+            totalRenderedFaces = rendered
+            totalCulledFaces = culled
+        }
     }
 
     /**
@@ -295,15 +447,18 @@ class WorldRenderer(
     private fun updateVisibleChunks(viewProjectionMatrix: FloatArray) {
         frustum.extractPlanes(viewProjectionMatrix)
         visibleChunkMeshes.clear()
-        val snapshot = synchronized(meshSwapLock) { chunkMeshes.toList() }
-        for (i in 0 until snapshot.size) {
-            val mesh = snapshot[i]
-            if (frustum.intersectsAabb(mesh.worldBounds)) {
-                visibleChunkMeshes.add(mesh)
+        var totalChunks = 0
+        synchronized(meshSwapLock) {
+            totalChunks = chunkMeshes.size
+            for (i in 0 until totalChunks) {
+                val mesh = chunkMeshes[i]
+                if (frustum.intersectsAabb(mesh.worldBounds)) {
+                    visibleChunkMeshes.add(mesh)
+                }
             }
         }
         visibleChunksCount = visibleChunkMeshes.size
-        frustumCulledChunksCount = snapshot.size - visibleChunksCount
+        frustumCulledChunksCount = totalChunks - visibleChunksCount
     }
 
     /**
@@ -367,18 +522,102 @@ class WorldRenderer(
     }
 
     private fun renderBlockOutline(viewProjMatrix: FloatArray, pos: BlockPos) {
-        val shader = highlightShader ?: return
-
-        // Slightly expand outline to prevent z-fighting with block face
         val inset = 0.003f
+        renderAabbOutline(
+            viewProjMatrix = viewProjMatrix,
+            minX = pos.x - inset,
+            minY = pos.y - inset,
+            minZ = pos.z - inset,
+            maxX = pos.x + 1f + inset,
+            maxY = pos.y + 1f + inset,
+            maxZ = pos.z + 1f + inset,
+            r = 1.0f,
+            g = 0.9f,
+            b = 0.2f,
+            a = 0.85f,
+            lineWidth = 4.0f
+        )
+    }
+
+    /**
+     * Renders wireframe AABB hitboxes for all active entities when [showHitboxes] is true.
+     */
+    fun renderHitboxes(
+        viewProjMatrix: FloatArray,
+        entities: List<Entity>,
+        player: Player? = null
+    ) {
+        if (!showHitboxes) return
+        if (highlightShader == null || highlightVaoId == 0) return
+
+        for (i in 0 until entities.size) {
+            val e = entities[i]
+            if (e.isRemoved) continue
+            val box = e.boundingBox
+            renderAabbOutline(
+                viewProjMatrix = viewProjMatrix,
+                minX = box.minX,
+                minY = box.minY,
+                minZ = box.minZ,
+                maxX = box.maxX,
+                maxY = box.maxY,
+                maxZ = box.maxZ,
+                r = 0.15f,
+                g = 0.95f,
+                b = 1.0f,
+                a = 0.95f,
+                lineWidth = 3.0f
+            )
+        }
+        if (player != null) {
+            val box = player.boundingBox
+            renderAabbOutline(
+                viewProjMatrix = viewProjMatrix,
+                minX = box.minX,
+                minY = box.minY,
+                minZ = box.minZ,
+                maxX = box.maxX,
+                maxY = box.maxY,
+                maxZ = box.maxZ,
+                r = 0.2f,
+                g = 1.0f,
+                b = 0.45f,
+                a = 0.7f,
+                lineWidth = 2.5f
+            )
+        }
+    }
+
+    private fun renderAabbOutline(
+        viewProjMatrix: FloatArray,
+        minX: Float,
+        minY: Float,
+        minZ: Float,
+        maxX: Float,
+        maxY: Float,
+        maxZ: Float,
+        r: Float,
+        g: Float,
+        b: Float,
+        a: Float,
+        lineWidth: Float
+    ) {
+        val shader = highlightShader ?: return
+        if (shader.programId == 0 || highlightVaoId == 0) return
+
+        val sx = (maxX - minX).coerceAtLeast(0.01f)
+        val sy = (maxY - minY).coerceAtLeast(0.01f)
+        val sz = (maxZ - minZ).coerceAtLeast(0.01f)
+
         Matrix4.setIdentity(modelMatrix)
-        Matrix4.translate(modelMatrix, pos.x - inset, pos.y - inset, pos.z - inset)
-        Matrix4.scale(modelMatrix, 1f + inset * 2f, 1f + inset * 2f, 1f + inset * 2f)
+        Matrix4.translate(modelMatrix, minX, minY, minZ)
+        Matrix4.scale(modelMatrix, sx, sy, sz)
         Matrix4.multiply(mvpMatrix, viewProjMatrix, modelMatrix)
 
-        GLES30.glLineWidth(4.0f)
+        GLES30.glLineWidth(lineWidth)
         shader.bind()
         shader.setUniformMatrix4fv("uMVPMatrix", mvpMatrix)
+        shader.setUniform4f("uColor", r, g, b, a)
 
         GLES30.glBindVertexArray(highlightVaoId)
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, 24)
@@ -425,5 +664,12 @@ class WorldRenderer(
         for (mesh in allToRelease) {
             mesh.release()
         }
+        syncedWorldRef = null
+        syncedTopologyVersion = -1L
+    }
+
+    companion object {
+        private const val MAX_MESH_UPLOADS_PER_FRAME = 6
+        private const val MAX_MESH_BUDGET_NS = 4_000_000L
     }
 }

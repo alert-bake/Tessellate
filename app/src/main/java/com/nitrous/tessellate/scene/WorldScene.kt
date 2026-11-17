@@ -51,6 +51,12 @@ class WorldScene : IGameScene {
     var autosaveTimerSeconds: Float = 0f
         private set
 
+    @Volatile
+    var configuredRenderDistance: Int = 4
+
+    private var viewBobPhase: Float = 0f
+    private var viewBobAmplitude: Float = 0f
+
     val worldRenderer = WorldRenderer(world)
     val entityRenderer = EntityRenderer()
     val player = Player()
@@ -137,7 +143,11 @@ class WorldScene : IGameScene {
 
         this.saveStorage = saveStorage
         currentSession = session
-        val newWorld = World(session = session, saveStorage = saveStorage)
+        val newWorld = World(
+            session = session,
+            renderDistance = configuredRenderDistance.coerceIn(1, 16),
+            saveStorage = saveStorage
+        )
         world = newWorld
 
         player.inventory.clear()
@@ -147,6 +157,7 @@ class WorldScene : IGameScene {
         } else {
             player.isInstaMine = false
         }
+        player.isFlying = false
         syncSelectedItemFromInventory()
 
         player.spawnAtSurface(newWorld, 24.5f, 24.5f)
@@ -192,6 +203,7 @@ class WorldScene : IGameScene {
 
         val loadedWorld = World(
             session = session,
+            renderDistance = configuredRenderDistance.coerceIn(1, 16),
             saveStorage = storage,
             initialCenterX = saveData.playerX,
             initialCenterZ = saveData.playerZ
@@ -316,19 +328,34 @@ class WorldScene : IGameScene {
     }
 
     fun updatePlayer(deltaTimeSeconds: Float, touchInput: TouchInputController, camera: Camera3D) {
-        // Update player movement, collision, gravity, crouching
+        // Update player movement, collision, gravity, flight, auto-jump, crouching
         player.update(
             deltaTime = deltaTimeSeconds,
             world = world,
             moveForward = touchInput.moveForward,
             moveStrafe = touchInput.moveStrafe,
-            crouchInput = touchInput.isCrouchPressed
+            crouchInput = touchInput.isCrouchPressed,
+            jumpInput = touchInput.isJumpHeld
         )
+
+        val horizSpeed = kotlin.math.sqrt(player.velX * player.velX + player.velZ * player.velZ)
+        val shouldBob = camera.viewBobbingEnabled && player.isGrounded && !player.isFlying && horizSpeed > 0.25f
+        if (shouldBob) {
+            viewBobPhase += deltaTimeSeconds * 10.5f
+            viewBobAmplitude = (viewBobAmplitude + deltaTimeSeconds * 6f).coerceAtMost(1f)
+        } else {
+            viewBobAmplitude = (viewBobAmplitude - deltaTimeSeconds * 8f).coerceAtLeast(0f)
+        }
+        val bobOffsetY = if (camera.viewBobbingEnabled && viewBobAmplitude > 0.001f) {
+            sin(viewBobPhase) * 0.055f * viewBobAmplitude
+        } else {
+            0f
+        }
 
         // Synchronize first-person camera with player position & orientation
         camera.setFirstPersonView(
             player.posX,
-            player.eyeY,
+            player.eyeY + bobOffsetY,
             player.posZ,
             player.pitch,
             player.yaw
@@ -339,6 +366,36 @@ class WorldScene : IGameScene {
 
         // Update active mining progress if touch interaction is in progress
         touchInput.updateInteraction(deltaTimeSeconds, this)
+    }
+
+    /**
+     * Resolves the currently targeted chunk (from crosshair hit, extended look raycast, or player
+     * feet fallback) and safely removes it via [World.vaporizeChunkAt].
+     */
+    fun vaporizeTargetedChunk(camera: Camera3D? = null): com.nitrous.tessellate.world.ChunkPos? {
+        if (world.isDestroyed) return null
+        val hit = currentTargetHit ?: camera?.let { cam ->
+            world.raycast(cam.eyeX, cam.eyeY, cam.eyeZ, cam.forwardX, cam.forwardY, cam.forwardZ, 64f)
+        }
+        val targetPos = if (hit != null) {
+            com.nitrous.tessellate.world.ChunkPos(
+                hit.blockPos.x shr 4,
+                hit.blockPos.y shr 4,
+                hit.blockPos.z shr 4
+            )
+        } else {
+            val px = kotlin.math.floor(player.posX).toInt() shr 4
+            val pz = kotlin.math.floor(player.posZ).toInt() shr 4
+            var py = (kotlin.math.floor(player.posY - 0.1f).toInt() shr 4).coerceIn(0, world.chunksY - 1)
+            while (py >= 0 && world.getChunk(px, py, pz)?.isEmpty != false) {
+                py--
+            }
+            if (py < 0) return null
+            com.nitrous.tessellate.world.ChunkPos(px, py, pz)
+        }
+        val removed = world.vaporizeChunkAt(targetPos.x, targetPos.y, targetPos.z)
+        worldRenderer.syncWithWorld(initGlBuffers = false)
+        return if (removed) targetPos else null
     }
 
     /**
@@ -433,8 +490,13 @@ class WorldScene : IGameScene {
         GLES30.glFrontFace(GLES30.GL_CCW)
         GLES30.glCullFace(GLES30.GL_BACK)
 
-        // Update meshes if blocks changed
-        worldRenderer.updateMeshes(pipeline)
+        // Update meshes within per-frame GPU budget, prioritizing chunks near the player
+        worldRenderer.updateMeshes(
+            texturePipeline = pipeline,
+            uploadToGpu = true,
+            focusX = player.posX,
+            focusZ = player.posZ
+        )
 
         // Render visible world chunks and targeted block wireframe outline using matrix snapshot
         camera.copyViewProjectionMatrix(viewProjScratch)
@@ -443,6 +505,11 @@ class WorldScene : IGameScene {
         // Render dynamic entities via independent draw path outside chunk meshes
         world.copyEntitiesTo(renderEntitiesScratch)
         entityRenderer.render(renderEntitiesScratch, camera, pipeline)
+
+        // Render wireframe AABB hitboxes when Show Hitboxes debug toggle is active
+        if (worldRenderer.showHitboxes) {
+            worldRenderer.renderHitboxes(viewProjScratch, renderEntitiesScratch, player)
+        }
     }
 
     // --- Mining System Implementation ---

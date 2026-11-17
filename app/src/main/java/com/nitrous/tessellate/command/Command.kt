@@ -62,6 +62,7 @@ class JsonCommand(
             "clear" -> handleClear(context.worldScene)
             "spawn" -> handleSpawn(context.args, context.worldScene, context.camera)
             "instamine" -> handleInstaMine(context.worldScene)
+            "fly" -> handleFly(context.worldScene)
             else -> {
                 val msg = definition.response?.takeIf { it.isNotBlank() }
                     ?: "Executed /$name"
@@ -111,6 +112,18 @@ class JsonCommand(
         return CommandResult(
             success = true,
             message = if (player.isInstaMine) "InstaMine enabled" else "InstaMine disabled"
+        )
+    }
+
+    private fun handleFly(worldScene: WorldScene): CommandResult {
+        val player = worldScene.player
+        player.isFlying = !player.isFlying
+        if (player.isFlying) {
+            player.velY = 0f
+        }
+        return CommandResult(
+            success = true,
+            message = if (player.isFlying) "Flight enabled" else "Flight disabled"
         )
     }
 

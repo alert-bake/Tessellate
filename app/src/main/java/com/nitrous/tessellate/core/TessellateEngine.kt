@@ -6,19 +6,26 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.content.Intent
 import com.nitrous.tessellate.command.CommandConsole
 import com.nitrous.tessellate.command.CommandResult
 import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.graphics.OpenGlEs3Backend
 import com.nitrous.tessellate.input.TouchInputController
+import com.nitrous.tessellate.modding.LuaModRuntime
 import com.nitrous.tessellate.registry.RegistryBootstrap
 import com.nitrous.tessellate.save.WorldSaveData
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.save.WorldSaveStorage
 import com.nitrous.tessellate.scene.VoxelScene
 import com.nitrous.tessellate.scene.WorldScene
+import com.nitrous.tessellate.settings.CacheClearResult
 import com.nitrous.tessellate.settings.GameSettings
+import com.nitrous.tessellate.settings.ReferenceActionResult
 import com.nitrous.tessellate.settings.SettingsManager
+import com.nitrous.tessellate.settings.SettingsRegistry
+import com.nitrous.tessellate.settings.SystemSettingsActions
+import com.nitrous.tessellate.settings.VanillaSettingsRegistrar
 import com.nitrous.tessellate.texture.TextureConstants
 import com.nitrous.tessellate.texture.TexturePipeline
 import com.nitrous.tessellate.ui.MenuButtonId
@@ -39,17 +46,21 @@ enum class SceneMode {
 /**
  * Primary engine runtime for Tessellate.
  * Coordinates OpenGL ES 3.0 graphics loop, first-person player physics,
- * multitouch input controller, and in-game custom textured UI.
+ * multitouch input controller, data-driven settings & modding, and in-game custom textured UI.
  */
 class TessellateEngine(
     private val context: Context
 ) : IGraphicsRuntime, GLSurfaceView.Renderer {
+
+    val appContext: Context
+        get() = context
 
     override val backend = OpenGlEs3Backend()
     override val texturePipeline = TexturePipeline(context)
     override val camera = Camera3D()
 
     val settingsManager = SettingsManager(context)
+    val settingsRegistry = SettingsRegistry()
 
     @Volatile
     var currentSettings: GameSettings = GameSettings()
@@ -88,33 +99,120 @@ class TessellateEngine(
     var onPauseStateChanged: ((Boolean) -> Unit)? = null
     var onSurfaceLayoutChanged: ((Int, Int) -> Unit)? = null
     var quitHandler: () -> Unit = { System.exit(0) }
+    var appFolderIntentLauncher: ((Intent) -> Boolean)? = null
 
-    val uiRenderer = TexturedUiRenderer(context, this)
+    val uiRenderer: TexturedUiRenderer
+
+    private var _luaModRuntime: LuaModRuntime? = null
+    val luaModRuntime: LuaModRuntime
+        get() = _luaModRuntime ?: error("LuaModRuntime is not initialized yet")
+
+    fun luaModRuntimeOrNull(): LuaModRuntime? = _luaModRuntime
 
     val initialSettingsLoadJob: Job
 
     init {
+        VanillaSettingsRegistrar.registerAll(this, settingsRegistry)
+        uiRenderer = TexturedUiRenderer(context, this)
+        _luaModRuntime = LuaModRuntime(this, settingsRegistry)
+
+        settingsRegistry.onPersistSetting = { def, sanitizedValue ->
+            if (def.isModSetting) {
+                val updatedMap = currentSettings.modValues.toMutableMap()
+                if (sanitizedValue != null) {
+                    updatedMap[def.id] = sanitizedValue.toString()
+                }
+                val updated = currentSettings.copy(modValues = updatedMap)
+                currentSettings = updated
+                settingsManager.saveSettings(updated)
+            }
+        }
+        settingsRegistry.onResetDefaults = {
+            val defaults = GameSettings(modValues = currentSettings.modValues)
+            applySettings(defaults)
+            settingsManager.saveSettings(defaults)
+        }
+
         applySettings(currentSettings)
+        _luaModRuntime?.loadModsFromDisk()
+
         initialSettingsLoadJob = settingsManager.loadSettings { loaded ->
             applySettings(loaded)
+            for ((modSettingId, rawVal) in loaded.modValues) {
+                if (settingsRegistry.getSetting(modSettingId)?.isModSetting == true) {
+                    settingsRegistry.setValue(modSettingId, rawVal, persist = false)
+                }
+            }
+            uiRenderer.settingsScreen.rebuildLayout()
         }
     }
 
     fun applySettings(settings: GameSettings) {
-        currentSettings = settings
+        val sanitized = settingsManager.sanitize(settings)
+        currentSettings = sanitized
+
         synchronized(camera) {
-            camera.fovDegrees = settings.fov
+            camera.fovDegrees = sanitized.fov
+            camera.viewBobbingEnabled = sanitized.viewBobbing
             camera.updateProjection()
         }
-        touchController.lookSensitivityX = settings.sensitivity
-        touchController.lookSensitivityY = settings.sensitivity
+
+        touchController.lookSensitivityX = sanitized.sensitivity
+        touchController.lookSensitivityY = sanitized.sensitivity
+        touchController.invertYAxis = sanitized.invertYAxis
+        touchController.uiScale = sanitized.uiScale
+        touchController.recomputeControlBounds()
+
+        worldScene.player.autoJump = sanitized.autoJump
+        worldScene.configuredRenderDistance = sanitized.renderDistance
+        if (!worldScene.world.isDestroyed && worldScene.world.isInfinite &&
+            worldScene.world.renderDistance != sanitized.renderDistance
+        ) {
+            worldScene.world.updateRenderDistance(
+                newDistance = sanitized.renderDistance,
+                playerX = worldScene.player.posX,
+                playerZ = worldScene.player.posZ,
+                texturePipeline = texturePipeline
+            )
+        }
+
+        worldScene.worldRenderer.showHitboxes = sanitized.showHitboxes
+        uiRenderer.showCoordinates = sanitized.showCoordinates
+        uiRenderer.showDebugHud = sanitized.showDebugHud
+        uiRenderer.uiScale = sanitized.uiScale
+        uiRenderer.settingsScreen.refreshDynamicState()
+    }
+
+    fun updateAndPersistSettings(transform: (GameSettings) -> GameSettings): GameSettings {
+        val updated = settingsManager.sanitize(transform(currentSettings))
+        applySettings(updated)
+        settingsManager.saveSettings(updated)
+        return updated
+    }
+
+    fun openAppFolder(): ReferenceActionResult {
+        return SystemSettingsActions.openAppFolder(context, appFolderIntentLauncher)
+    }
+
+    fun clearCache(): CacheClearResult {
+        return SystemSettingsActions.clearCache(context, worldScene.worldRenderer, texturePipeline)
+    }
+
+    fun resetAllSettingsToDefaults() {
+        val defaults = GameSettings(modValues = currentSettings.modValues)
+        applySettings(defaults)
+        settingsManager.saveSettings(defaults)
+        uiRenderer.settingsScreen.rebuildLayout()
     }
 
     /**
      * Parses and executes a slash command string against the active world scene.
      */
     fun executeCommand(rawInput: String): CommandResult {
-        return CommandConsole.execute(rawInput, worldScene, camera)
+        val res = CommandConsole.execute(rawInput, worldScene, camera)
+        settingsRegistry.notifyListeners()
+        uiRenderer.settingsScreen.refreshDynamicState()
+        return res
     }
 
     // Frame timing & FPS calculation
@@ -147,8 +245,15 @@ class TessellateEngine(
         var pauseChanged = false
         synchronized(modeLock) {
             if (currentAppState == newState) return
+            if (newState == AppState.DEBUG_OPTIONS && !currentSettings.enableDebugOptions) {
+                return
+            }
             currentAppState = newState
-            if (newState != AppState.PLAYING && newState != AppState.SETTINGS && isPaused) {
+            if (newState != AppState.PLAYING &&
+                newState != AppState.SETTINGS &&
+                newState != AppState.DEBUG_OPTIONS &&
+                isPaused
+            ) {
                 isPaused = false
                 pauseChanged = true
             }
@@ -192,6 +297,11 @@ class TessellateEngine(
     }
 
     fun navigateBackFromSettings() {
+        val stateNow = synchronized(modeLock) { currentAppState }
+        if (stateNow == AppState.DEBUG_OPTIONS) {
+            setAppState(AppState.SETTINGS)
+            return
+        }
         val target = synchronized(modeLock) { settingsReturnState }
         setAppState(target)
     }
@@ -273,6 +383,7 @@ class TessellateEngine(
             MenuButtonId.SETTINGS_FOV_MINUS,
             MenuButtonId.SETTINGS_FOV_PLUS,
             MenuButtonId.SETTINGS_BACK -> uiRenderer.settingsScreen.handleButtonClick(buttonId)
+            MenuButtonId.SETTINGS_DYNAMIC -> Unit
             MenuButtonId.WORLD_SELECT_ENTRY_0,
             MenuButtonId.WORLD_SELECT_ENTRY_1,
             MenuButtonId.WORLD_SELECT_ENTRY_2,
@@ -361,7 +472,8 @@ class TessellateEngine(
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        val currentNs = SystemClock.elapsedRealtimeNanos()
+        val frameStartNs = SystemClock.elapsedRealtimeNanos()
+        val currentNs = frameStartNs
         if (lastFrameTimeNs == 0L) lastFrameTimeNs = currentNs
         val deltaSec = ((currentNs - lastFrameTimeNs) / 1_000_000_000.0).toFloat().coerceIn(0.001f, 0.05f)
         lastFrameTimeNs = currentNs
@@ -375,8 +487,11 @@ class TessellateEngine(
             fpsTimerNs = currentNs
         }
 
-        // Flush any UI-thread texture filter mode toggles safely on the active GL thread
+        // Flush any UI-thread texture filter mode toggles or deferred GPU cleanup requests safely on the GL thread
         texturePipeline.applyPendingFilterMode()
+        if (gl != null) {
+            worldScene.worldRenderer.processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
+        }
 
         val (frameAppState, frameMode, framePaused) = synchronized(modeLock) {
             Triple(currentAppState, currentSceneMode, isPaused)
@@ -386,6 +501,7 @@ class TessellateEngine(
             // Pause 3D world physics/ticking and render 2D UI over a solid background color
             backend.clear(0.09f, 0.11f, 0.14f, 1.0f)
             uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = false)
+            applyFrameRateCap(gl, frameStartNs)
             return
         }
 
@@ -395,12 +511,8 @@ class TessellateEngine(
         // Update and Render Active 3D Scene (pause updates when Pause Menu is open)
         when (frameMode) {
             SceneMode.WORLD -> {
-                if (!framePaused) {
-                    synchronized(modeLock) {
-                        if (currentSceneMode == SceneMode.WORLD && currentAppState == AppState.PLAYING && !isPaused) {
-                            worldScene.updatePlayer(deltaSec, touchController, camera)
-                        }
-                    }
+                if (!framePaused && currentSceneMode == SceneMode.WORLD && currentAppState == AppState.PLAYING && !isPaused) {
+                    worldScene.updatePlayer(deltaSec, touchController, camera)
                     worldScene.update(deltaSec)
                 }
                 worldScene.render(this)
@@ -415,10 +527,28 @@ class TessellateEngine(
 
         // Render In-Game Textured UI, Multitouch D-Pad, and HUD (or Pause Menu overlay)
         uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = framePaused)
+        applyFrameRateCap(gl, frameStartNs)
+    }
+
+    private fun applyFrameRateCap(gl: GL10?, frameStartNs: Long) {
+        if (gl == null) return
+        val maxFps = currentSettings.maxFps
+        if (maxFps <= 0) return
+        val targetFrameNs = 1_000_000_000L / maxFps
+        val elapsedNs = SystemClock.elapsedRealtimeNanos() - frameStartNs
+        val remainingMs = (targetFrameNs - elapsedNs) / 1_000_000L
+        if (remainingMs in 1L..50L) {
+            try {
+                Thread.sleep(remainingMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 
     fun onTouchEvent(event: MotionEvent): Boolean {
-        val (state, paused) = synchronized(modeLock) { currentAppState to isPaused }
+        val state = currentAppState
+        val paused = isPaused
 
         // Route menu screens & pause overlay directly through TouchInputController
         if (state != AppState.PLAYING || paused) {
@@ -431,7 +561,8 @@ class TessellateEngine(
                 menuButtons = uiRenderer.getActiveMenuButtons(state, paused),
                 onButtonClick = { buttonId -> handleMenuButtonAction(buttonId) },
                 onMenuSliderTouch = { x, y, action -> uiRenderer.handleSettingsSliderTouch(x, y, action) },
-                isPausedOverlay = paused
+                isPausedOverlay = paused,
+                onUiButtonClick = { button -> uiRenderer.settingsScreen.handleButtonClick(button) }
             )
         }
 

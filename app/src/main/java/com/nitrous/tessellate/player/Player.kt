@@ -21,15 +21,20 @@ class Player(
     val inventory = Inventory()
 
     // Camera Look Orientation
+    @Volatile
     var yaw: Float = 0f
+    @Volatile
     var pitch: Float = 0f
         set(value) {
             field = value.coerceIn(-89f, 89f)
         }
 
     // Velocity (blocks per second)
+    @Volatile
     var velX: Float = 0f
+    @Volatile
     var velY: Float = 0f
+    @Volatile
     var velZ: Float = 0f
 
     // Physical dimensions
@@ -41,18 +46,27 @@ class Player(
 
     // Movement speeds & physics constants
     val walkSpeed: Float = 4.3f       // blocks/second
+    val flySpeed: Float = 8.5f        // blocks/second
     val crouchSpeed: Float = 2.2f     // blocks/second
     val jumpSpeed: Float = 8.2f       // blocks/second
     val gravity: Float = -24.0f       // blocks/second^2
     val terminalVelocity: Float = -35.0f
 
     // Player States
+    @Volatile
     var isCrouching: Boolean = false
         private set
+    @Volatile
     var wantsCrouch: Boolean = false
+    @Volatile
     var isGrounded: Boolean = false
         private set
+    @Volatile
     var isInstaMine: Boolean = false
+    @Volatile
+    var isFlying: Boolean = false
+    @Volatile
+    var autoJump: Boolean = false
 
     val currentHeight: Float
         get() = if (isCrouching) crouchHeight else standingHeight
@@ -77,9 +91,13 @@ class Player(
     }
 
     /**
-     * Triggers an upward jump if the player is currently grounded.
+     * Triggers an upward jump if the player is currently grounded (or nudges upward while flying).
      */
     fun jump(): Boolean {
+        if (isFlying) {
+            velY = flySpeed * 0.75f
+            return true
+        }
         if (!isGrounded) return false
         velY = jumpSpeed
         isGrounded = false
@@ -94,12 +112,19 @@ class Player(
         world: World,
         moveForward: Float, // +1 for forward, -1 for backward
         moveStrafe: Float,  // +1 for right, -1 for left
-        crouchInput: Boolean
+        crouchInput: Boolean,
+        jumpInput: Boolean = false
     ) {
         val dt = deltaTime.coerceIn(0.001f, 0.05f)
 
-        // 1. Process Crouching state with ceiling clearance check
-        handleCrouching(crouchInput, world)
+        // 1. Process Crouching state with ceiling clearance check (crouch button doubles as descend while flying)
+        if (!isFlying) {
+            handleCrouching(crouchInput, world)
+        } else {
+            wantsCrouch = false
+            isCrouching = false
+            updateBoundingBox()
+        }
 
         // 2. Compute Directional Movement & Normalize Diagonals
         var inputX = moveStrafe
@@ -119,23 +144,68 @@ class Player(
         val rightDirX = cos(yawRad).toFloat()
         val rightDirZ = sin(yawRad).toFloat()
 
-        val activeSpeed = if (isCrouching) crouchSpeed else walkSpeed
+        val activeSpeed = when {
+            isFlying -> flySpeed
+            isCrouching -> crouchSpeed
+            else -> walkSpeed
+        }
         velX = (forwardDirX * inputZ + rightDirX * inputX) * activeSpeed
         velZ = (forwardDirZ * inputZ + rightDirZ * inputX) * activeSpeed
 
-        // 3. Verify Ground Support & Apply Gravity
+        // 3. Verify Ground Support & Apply Gravity or Flight Vertical Velocity
         checkGroundSupport(world)
-        if (!isGrounded) {
-            velY += gravity * dt
-            if (velY < terminalVelocity) {
-                velY = terminalVelocity
+        if (isFlying) {
+            velY = when {
+                jumpInput && !crouchInput -> flySpeed * 0.75f
+                crouchInput && !jumpInput -> -flySpeed * 0.75f
+                else -> 0f
             }
         } else {
-            if (velY < 0f) velY = 0f
+            if (autoJump && isGrounded && inputMagnitude > 0.1f) {
+                tryAutoJump(world, velX * dt, velZ * dt)
+            }
+            if (!isGrounded) {
+                velY += gravity * dt
+                if (velY < terminalVelocity) {
+                    velY = terminalVelocity
+                }
+            } else {
+                if (velY < 0f) velY = 0f
+            }
         }
 
         // 4. Move with 3-Axis Separated AABB Collision Resolution
         moveWithCollision(velX * dt, velY * dt, velZ * dt, world)
+    }
+
+    private fun tryAutoJump(world: World, stepDx: Float, stepDz: Float) {
+        val probeLen = sqrt(stepDx * stepDx + stepDz * stepDz)
+        if (probeLen < 1e-4f) return
+        val dirX = stepDx / probeLen
+        val dirZ = stepDz / probeLen
+        val lookAheadDist = (radius + 0.18f)
+
+        val feetStepBox = AABB(
+            posX + dirX * lookAheadDist - radius * 0.8f,
+            posY + 0.05f,
+            posZ + dirZ * lookAheadDist - radius * 0.8f,
+            posX + dirX * lookAheadDist + radius * 0.8f,
+            posY + 0.95f,
+            posZ + dirZ * lookAheadDist + radius * 0.8f
+        )
+        if (!hasBlockCollision(feetStepBox, world)) return
+
+        val clearanceBox = AABB(
+            posX + dirX * lookAheadDist - radius * 0.8f,
+            posY + 1.05f,
+            posZ + dirZ * lookAheadDist - radius * 0.8f,
+            posX + dirX * lookAheadDist + radius * 0.8f,
+            posY + 1.05f + currentHeight,
+            posZ + dirZ * lookAheadDist + radius * 0.8f
+        )
+        if (!hasBlockCollision(clearanceBox, world)) {
+            jump()
+        }
     }
 
     private fun handleCrouching(crouchInput: Boolean, world: World) {

@@ -29,11 +29,19 @@ class SurfacePass(
 
     override fun generate(chunk: Chunk, world: World) {
         val air = BlockType.AIR
+        val baseY = chunk.chunkY * Chunk.SIZE
+        if (baseY > MAX_HEIGHT) {
+            chunk.fill(air)
+            return
+        }
+        if (baseY + Chunk.SIZE - 1 < MIN_HEIGHT - 4) {
+            return
+        }
+
         val grass = BlockType.GRASS
         val dirt = BlockType.DIRT
 
         val baseX = chunk.chunkX * Chunk.SIZE
-        val baseY = chunk.chunkY * Chunk.SIZE
         val baseZ = chunk.chunkZ * Chunk.SIZE
 
         for (lx in 0 until Chunk.SIZE) {
@@ -79,6 +87,7 @@ class CavePass(
         if (baseY >= MAX_CAVE_Y) return
 
         val air = BlockType.AIR
+        val airId = air.id
         val baseX = chunk.chunkX * Chunk.SIZE
         val baseZ = chunk.chunkZ * Chunk.SIZE
 
@@ -88,8 +97,7 @@ class CavePass(
             for (lz in 0 until Chunk.SIZE) {
                 val wz = baseZ + lz
                 for (lx in 0 until Chunk.SIZE) {
-                    val current = chunk.getBlock(lx, ly, lz)
-                    if (current == air) continue
+                    if (chunk.getBlockIdUnchecked(lx, ly, lz) == airId) continue
                     val wx = baseX + lx
                     if (isCaveAt(world.seed, wx, wy, wz)) {
                         chunk.setBlockRaw(lx, ly, lz, air)
@@ -124,10 +132,12 @@ class OrePass(
 ) : WorldGenPass {
 
     override fun generate(chunk: Chunk, world: World) {
-        val stone = BlockType.STONE
+        val baseY = chunk.chunkY * Chunk.SIZE
+        if (baseY > SurfacePass.MAX_HEIGHT) return
+
+        val stoneId = BlockType.STONE.id
         val ore = BlockType.COBBLESTONE
         val baseX = chunk.chunkX * Chunk.SIZE
-        val baseY = chunk.chunkY * Chunk.SIZE
         val baseZ = chunk.chunkZ * Chunk.SIZE
 
         for (ly in 0 until Chunk.SIZE) {
@@ -135,7 +145,7 @@ class OrePass(
             for (lz in 0 until Chunk.SIZE) {
                 val wz = baseZ + lz
                 for (lx in 0 until Chunk.SIZE) {
-                    if (chunk.getBlock(lx, ly, lz) == stone) {
+                    if (chunk.getBlockIdUnchecked(lx, ly, lz) == stoneId) {
                         val wx = baseX + lx
                         if (PerlinNoise.hashFloat(world.seed + 8191L, wx, wy, wz) < ORE_CHANCE) {
                             chunk.setBlockRaw(lx, ly, lz, ore)
@@ -162,13 +172,17 @@ class TreeFeaturePass(
 ) : WorldGenPass {
 
     override fun generate(chunk: Chunk, world: World) {
+        val baseY = chunk.chunkY * Chunk.SIZE
+        if (baseY + Chunk.SIZE - 1 < SurfacePass.MIN_HEIGHT + 1 || baseY > SurfacePass.MAX_HEIGHT + 7) {
+            return
+        }
+
         val oakLog = BlockType.fromIdentifier("tessellate:oak_log") ?: BlockType.OAK_LOG
         val leaves = BlockType.fromIdentifier("tessellate:leaves") ?: BlockType.LEAVES
         val grass = BlockType.GRASS
         val air = BlockType.AIR
 
         val baseX = chunk.chunkX * Chunk.SIZE
-        val baseY = chunk.chunkY * Chunk.SIZE
         val baseZ = chunk.chunkZ * Chunk.SIZE
 
         // Check tree candidate root columns within horizontal canopy radius (+-1 around chunk)

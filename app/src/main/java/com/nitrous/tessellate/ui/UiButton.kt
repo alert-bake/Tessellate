@@ -22,6 +22,7 @@ enum class MenuButtonId {
     SETTINGS_FOV_MINUS,
     SETTINGS_FOV_PLUS,
     SETTINGS_BACK,
+    SETTINGS_DYNAMIC,
     WORLD_SELECT_ENTRY_0,
     WORLD_SELECT_ENTRY_1,
     WORLD_SELECT_ENTRY_2,
@@ -49,7 +50,8 @@ data class UiButton(
     val rect: RectF = RectF(),
     var enabled: Boolean = true,
     var isHovered: Boolean = false,
-    var isSelected: Boolean = false
+    var isSelected: Boolean = false,
+    var actionKey: String? = null
 ) {
     val visualState: UiButtonState
         get() = when {

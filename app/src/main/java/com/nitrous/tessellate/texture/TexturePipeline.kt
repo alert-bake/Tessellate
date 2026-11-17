@@ -37,7 +37,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
     private val textureHandles = mutableMapOf<String, Int>()
     private val diagnostics = mutableMapOf<String, TextureDiagnostic>()
     private val loadedBitmaps = mutableMapOf<String, Bitmap>()
-    private val atlasUvMap = mutableMapOf<String, TextureUvRect>()
+    @Volatile
+    private var atlasUvMap: Map<String, TextureUvRect> = emptyMap()
 
     @Volatile
     private var filterModeDirty: Boolean = false
@@ -174,7 +175,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
      * padding around each 16x16 tile and updates [atlasUvMap] to point strictly to the inner 16x16 region.
      */
     fun createAtlasBitmap(): Bitmap {
-        atlasUvMap.clear()
+        val nextUvMap = HashMap<String, TextureUvRect>(ATLAS_TILE_GRID.size + PROCEDURAL_ATLAS_TILES.size)
 
         val atlasBitmap = Bitmap.createBitmap(ATLAS_SIZE, ATLAS_SIZE, Bitmap.Config.ARGB_8888)
         atlasBitmap.eraseColor(Color.TRANSPARENT)
@@ -202,7 +203,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
             val vMin = innerY.toFloat() / ATLAS_SIZE
             val uMax = (innerX + ATLAS_TILE_SIZE).toFloat() / ATLAS_SIZE
             val vMax = (innerY + ATLAS_TILE_SIZE).toFloat() / ATLAS_SIZE
-            atlasUvMap[id] = TextureUvRect(uMin, vMin, uMax, vMax)
+            nextUvMap[id] = TextureUvRect(uMin, vMin, uMax, vMax)
         }
 
         // Procedural fallback tiles for tree blocks when standalone PNGs aren't bundled
@@ -230,9 +231,10 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
             val vMin = innerY.toFloat() / ATLAS_SIZE
             val uMax = (innerX + ATLAS_TILE_SIZE).toFloat() / ATLAS_SIZE
             val vMax = (innerY + ATLAS_TILE_SIZE).toFloat() / ATLAS_SIZE
-            atlasUvMap[id] = TextureUvRect(uMin, vMin, uMax, vMax)
+            nextUvMap[id] = TextureUvRect(uMin, vMin, uMax, vMax)
         }
 
+        atlasUvMap = nextUvMap
         return atlasBitmap
     }
 
@@ -320,7 +322,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
     }
 
     fun getAtlasUv(textureId: String): TextureUvRect {
-        return atlasUvMap[textureId] ?: atlasUvMap[TextureConstants.PROTO_DEBUG_BUG] ?: TextureUvRect(0f, 0f, 1f, 1f)
+        val snapshot = atlasUvMap
+        return snapshot[textureId] ?: snapshot[TextureConstants.PROTO_DEBUG_BUG] ?: TextureUvRect(0f, 0f, 1f, 1f)
     }
 
     override fun getTextureHandle(id: String): Int {
@@ -522,7 +525,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
         }
         textureHandles.clear()
         diagnostics.clear()
-        atlasUvMap.clear()
+        atlasUvMap = emptyMap()
         loadedBitmaps.values.forEach { if (!it.isRecycled) it.recycle() }
         loadedBitmaps.clear()
         isGlInitialized = false

@@ -52,6 +52,9 @@ class Camera3D(
 
     var isFirstPerson: Boolean = true
 
+    @Volatile
+    var viewBobbingEnabled: Boolean = true
+
     private var aspectRatio: Float = 16f / 9f
 
     init {

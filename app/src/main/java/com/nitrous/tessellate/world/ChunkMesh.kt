@@ -90,6 +90,12 @@ class ChunkMesh(
     private var transparentIndexArrayLength: Int = 0
 
     fun initGl() {
+        if (chunk.isEmpty) return
+        initOpaqueGl()
+        initTransparentGl()
+    }
+
+    private fun initOpaqueGl() {
         if (opaqueVaoId == 0) {
             val vao = IntArray(1)
             val buffers = IntArray(2)
@@ -100,7 +106,9 @@ class ChunkMesh(
             opaqueEboId = buffers[1]
             configureVao(opaqueVaoId, opaqueVboId, opaqueEboId)
         }
+    }
 
+    private fun initTransparentGl() {
         if (transparentVaoId == 0) {
             val vao = IntArray(1)
             val buffers = IntArray(2)
@@ -143,9 +151,40 @@ class ChunkMesh(
      * and clears [Chunk.needsMeshRebuild]. Safe to run in background threads & headless unit tests.
      */
     fun generateMeshData(world: World, texturePipeline: TexturePipeline) {
-        val baseX = chunk.chunkX * Chunk.SIZE
-        val baseY = chunk.chunkY * Chunk.SIZE
-        val baseZ = chunk.chunkZ * Chunk.SIZE
+        val hadGeometry = opaqueIndexCount > 0 || transparentIndexCount > 0
+        if (chunk.isEmpty) {
+            opaqueVertexFloatLength = 0
+            opaqueIndexArrayLength = 0
+            opaqueIndexCount = 0
+            opaqueFacesCount = 0
+            transparentVertexFloatLength = 0
+            transparentIndexArrayLength = 0
+            transparentIndexCount = 0
+            transparentFacesCount = 0
+            culledFacesCount = 0
+            rebuildCount++
+            chunk.needsMeshRebuild = false
+            hasPendingGpuUpload = hadGeometry
+            return
+        }
+
+        // Fetch the 6 immediate neighbor chunks once before the 4,096-block loop
+        // so interior and boundary face-culling checks incur zero chunkLock/ChunkPos overhead.
+        val cx = chunk.chunkX
+        val cy = chunk.chunkY
+        val cz = chunk.chunkZ
+        val nXNeg = world.getChunk(cx - 1, cy, cz)
+        val nXPos = world.getChunk(cx + 1, cy, cz)
+        val nYNeg = world.getChunk(cx, cy - 1, cz)
+        val nYPos = world.getChunk(cx, cy + 1, cz)
+        val nZNeg = world.getChunk(cx, cy, cz - 1)
+        val nZPos = world.getChunk(cx, cy, cz + 1)
+
+        val baseX = cx * Chunk.SIZE
+        val baseY = cy * Chunk.SIZE
+        val baseZ = cz * Chunk.SIZE
+        val air = BlockType.AIR
+        val airId = air.id
 
         var opaqueVCount = 0
         var opaqueICount = 0
@@ -163,25 +202,40 @@ class ChunkMesh(
 
         for (ly in 0 until Chunk.SIZE) {
             val wy = baseY + ly
+            val fy = wy.toFloat()
             for (lz in 0 until Chunk.SIZE) {
                 val wz = baseZ + lz
+                val fz = wz.toFloat()
                 for (lx in 0 until Chunk.SIZE) {
-                    val wx = baseX + lx
-                    val block = chunk.getBlock(lx, ly, lz)
-                    if (block == BlockType.AIR) continue
+                    val blockId = chunk.getBlockIdUnchecked(lx, ly, lz)
+                    if (blockId == airId) continue
+                    val block = BlockType.fromId(blockId)
                     if (!block.isOpaque && !block.isTransparent) continue
 
                     val isTransparentPass = block.isTransparent
-                    val fx = wx.toFloat()
-                    val fy = wy.toFloat()
-                    val fz = wz.toFloat()
+                    val fx = (baseX + lx).toFloat()
 
-                    for (dir in Direction.values()) {
-                        val nwx = wx + dir.dx
-                        val nwy = wy + dir.dy
-                        val nwz = wz + dir.dz
+                    for (dIdx in 0 until DIRECTIONS.size) {
+                        val dir = DIRECTIONS[dIdx]
+                        val nlx = lx + dir.dx
+                        val nly = ly + dir.dy
+                        val nlz = lz + dir.dz
 
-                        val neighbor = world.getBlock(nwx, nwy, nwz)
+                        val neighborId: Byte = if ((nlx or nly or nlz) and -16 == 0) {
+                            chunk.getBlockIdUnchecked(nlx, nly, nlz)
+                        } else {
+                            val neighborChunk = when (dir) {
+                                Direction.WEST -> nXNeg
+                                Direction.EAST -> nXPos
+                                Direction.DOWN -> nYNeg
+                                Direction.UP -> nYPos
+                                Direction.NORTH -> nZNeg
+                                Direction.SOUTH -> nZPos
+                            }
+                            neighborChunk?.getBlockIdUnchecked(nlx and Chunk.MASK, nly and Chunk.MASK, nlz and Chunk.MASK) ?: airId
+                        }
+
+                        val neighbor = if (neighborId == airId) air else BlockType.fromId(neighborId)
                         if (!shouldRenderFace(block, neighbor)) {
                             culledCount++
                             continue
@@ -253,7 +307,7 @@ class ChunkMesh(
         culledFacesCount = culledCount
         rebuildCount++
         chunk.needsMeshRebuild = false
-        hasPendingGpuUpload = true
+        hasPendingGpuUpload = (opaqueICount > 0 || transICount > 0 || hadGeometry)
     }
 
     /**
@@ -275,32 +329,43 @@ class ChunkMesh(
      * Uploads pre-built CPU mesh buffers to OpenGL ES 3.0 VBO/EBOs on the GL thread.
      */
     fun uploadCpuMeshToGpu() {
-        if (opaqueVaoId == 0 || transparentVaoId == 0) {
-            initGl()
+        if (opaqueIndexCount <= 0 && transparentIndexCount <= 0) {
+            hasPendingGpuUpload = false
+            return
         }
 
-        if (opaqueIndexCount > 0 && opaqueVboId != 0 && opaqueEboId != 0) {
-            uploadPassToGpu(
-                vboId = opaqueVboId,
-                eboId = opaqueEboId,
-                vertices = rawOpaqueVertices,
-                vertexFloatLength = opaqueVertexFloatLength,
-                indices = rawOpaqueIndices,
-                indexLength = opaqueIndexArrayLength,
-                isTransparent = false
-            )
+        if (opaqueIndexCount > 0) {
+            if (opaqueVaoId == 0) {
+                initOpaqueGl()
+            }
+            if (opaqueVboId != 0 && opaqueEboId != 0) {
+                uploadPassToGpu(
+                    vboId = opaqueVboId,
+                    eboId = opaqueEboId,
+                    vertices = rawOpaqueVertices,
+                    vertexFloatLength = opaqueVertexFloatLength,
+                    indices = rawOpaqueIndices,
+                    indexLength = opaqueIndexArrayLength,
+                    isTransparent = false
+                )
+            }
         }
 
-        if (transparentIndexCount > 0 && transparentVboId != 0 && transparentEboId != 0) {
-            uploadPassToGpu(
-                vboId = transparentVboId,
-                eboId = transparentEboId,
-                vertices = rawTransparentVertices,
-                vertexFloatLength = transparentVertexFloatLength,
-                indices = rawTransparentIndices,
-                indexLength = transparentIndexArrayLength,
-                isTransparent = true
-            )
+        if (transparentIndexCount > 0) {
+            if (transparentVaoId == 0) {
+                initTransparentGl()
+            }
+            if (transparentVboId != 0 && transparentEboId != 0) {
+                uploadPassToGpu(
+                    vboId = transparentVboId,
+                    eboId = transparentEboId,
+                    vertices = rawTransparentVertices,
+                    vertexFloatLength = transparentVertexFloatLength,
+                    indices = rawTransparentIndices,
+                    indexLength = transparentIndexArrayLength,
+                    isTransparent = true
+                )
+            }
         }
 
         hasPendingGpuUpload = false
@@ -501,6 +566,8 @@ class ChunkMesh(
     }
 
     companion object {
+        private val DIRECTIONS = Direction.values()
+
         /**
          * Face culling rules:
          * - Transparent blocks never cull adjacent opaque block faces.

@@ -18,18 +18,36 @@ class Chunk(
     val blocks = ByteArray(VOLUME)
 
     // Dirty tracking for incremental mesh rebuilds
+    @Volatile
     var needsMeshRebuild: Boolean = true
     var isDirty: Boolean
         get() = needsMeshRebuild
         set(value) {
             needsMeshRebuild = value
         }
+    @Volatile
     var isEmpty: Boolean = true
         private set
 
     @Suppress("NOTHING_TO_INLINE")
     private inline fun getIndex(lx: Int, ly: Int, lz: Int): Int {
         return (ly shl 8) or (lz shl 4) or lx
+    }
+
+    /**
+     * Fast unchecked raw block ID lookup for callers that already verified `0 <= lx, ly, lz < 16`.
+     */
+    @Suppress("NOTHING_TO_INLINE")
+    inline fun getBlockIdUnchecked(lx: Int, ly: Int, lz: Int): Byte {
+        return blocks[(ly shl 8) or (lz shl 4) or lx]
+    }
+
+    /**
+     * Fast unchecked [BlockType] lookup for callers that already verified `0 <= lx, ly, lz < 16`.
+     */
+    @Suppress("NOTHING_TO_INLINE")
+    inline fun getBlockUnchecked(lx: Int, ly: Int, lz: Int): BlockType {
+        return BlockType.fromId(blocks[(ly shl 8) or (lz shl 4) or lx])
     }
 
     fun getBlock(lx: Int, ly: Int, lz: Int): BlockType {

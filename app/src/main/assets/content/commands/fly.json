@@ -1,0 +1,6 @@
+{
+  "name": "fly",
+  "description": "Toggles creative-style flight mode for the player.",
+  "usage": "/fly",
+  "action": "fly"
+}

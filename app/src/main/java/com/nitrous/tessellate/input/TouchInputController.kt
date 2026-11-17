@@ -32,21 +32,30 @@ class TouchInputController {
     // Jump button layout bounding box in screen pixels (bottom-right, synced with TexturedUiRenderer)
     val jumpButtonRect = RectF()
 
+    private val inputLock = Any()
+
     // Active button states
+    @Volatile
     var isUpPressed: Boolean = false
         private set
+    @Volatile
     var isDownPressed: Boolean = false
         private set
+    @Volatile
     var isLeftPressed: Boolean = false
         private set
+    @Volatile
     var isRightPressed: Boolean = false
         private set
+    @Volatile
     var isCrouchPressed: Boolean = false
         private set
 
     // Normalized directional movement inputs [-1.0..+1.0]
+    @Volatile
     var moveForward: Float = 0f
         private set
+    @Volatile
     var moveStrafe: Float = 0f
         private set
 
@@ -57,21 +66,37 @@ class TouchInputController {
     private val activeJumpPointers = mutableSetOf<Int>()
 
     // First-person camera look tracking
+    @Volatile
     var lookPointerId: Int? = null
         private set
     private var lastLookX: Float = 0f
     private var lastLookY: Float = 0f
 
     // Direct, consistent camera sensitivity without smoothing or lagging
+    @Volatile
     var lookSensitivityX: Float = 0.22f
+    @Volatile
     var lookSensitivityY: Float = 0.22f
+    @Volatile
+    var invertYAxis: Boolean = false
+    @Volatile
+    var uiScale: Float = 1.0f
+
+    val isJumpHeld: Boolean
+        get() = activeJumpPointers.isNotEmpty()
+
+    private var lastSurfaceWidth: Int = 1920
+    private var lastSurfaceHeight: Int = 1080
 
     // Direct touchscreen block mining and placement tracking
+    @Volatile
     var interactPointerId: Int? = null
         private set
     private var interactStartX: Float = 0f
     private var interactStartY: Float = 0f
+    @Volatile
     private var interactDownTimeMs: Long = 0L
+    @Volatile
     private var isInteractDragging: Boolean = false
 
     // Tuning constants
@@ -84,8 +109,17 @@ class TouchInputController {
     private var activeSliderPointerId: Int? = null
 
     fun onSurfaceChanged(width: Int, height: Int) {
+        lastSurfaceWidth = width.coerceAtLeast(1)
+        lastSurfaceHeight = height.coerceAtLeast(1)
+        recomputeControlBounds()
+    }
+
+    fun recomputeControlBounds() {
+        val width = lastSurfaceWidth
+        val height = lastSurfaceHeight
+        val scaleFactor = uiScale.coerceIn(0.6f, 1.5f)
         // Landscape layout: D-pad pinned to bottom-left corner with comfortable margins
-        val dpadSize = (height * 0.48f).coerceIn(180f, 270f)
+        val dpadSize = ((height * 0.48f).coerceIn(180f, 270f)) * scaleFactor
         val left = 36f
         val bottom = height - 24f
         val top = bottom - dpadSize
@@ -114,7 +148,8 @@ class TouchInputController {
         menuButtons: List<UiButton> = emptyList(),
         onButtonClick: ((MenuButtonId) -> Unit)? = null,
         onMenuSliderTouch: ((Float, Float, Int) -> Boolean)? = null,
-        isPausedOverlay: Boolean = false
+        isPausedOverlay: Boolean = false,
+        onUiButtonClick: ((UiButton) -> Unit)? = null
     ): Boolean {
         if (appState != AppState.PLAYING || isPausedOverlay) {
             return handleMenuTouchEvent(
@@ -122,7 +157,8 @@ class TouchInputController {
                 appState = appState,
                 buttons = menuButtons,
                 onButtonClick = onButtonClick,
-                onSliderTouch = onMenuSliderTouch
+                onSliderTouch = onMenuSliderTouch,
+                onUiButtonClick = onUiButtonClick
             )
         }
 
@@ -159,20 +195,24 @@ class TouchInputController {
                         lastLookX = x
                         lastLookY = y
 
-                        interactPointerId = pointerId
-                        interactStartX = x
-                        interactStartY = y
-                        interactDownTimeMs = now
-                        isInteractDragging = false
+                        synchronized(inputLock) {
+                            interactPointerId = pointerId
+                            interactStartX = x
+                            interactStartY = y
+                            interactDownTimeMs = now
+                            isInteractDragging = false
+                        }
                         return true
                     } else if (interactPointerId == null && pointerId != lookPointerId) {
                         // Multitouch: A second gameplay finger is placed while another is looking.
                         // Assign dedicated interaction ownership so look and interaction do not conflict!
-                        interactPointerId = pointerId
-                        interactStartX = x
-                        interactStartY = y
-                        interactDownTimeMs = now
-                        isInteractDragging = false
+                        synchronized(inputLock) {
+                            interactPointerId = pointerId
+                            interactStartX = x
+                            interactStartY = y
+                            interactDownTimeMs = now
+                            isInteractDragging = false
+                        }
                         return true
                     }
                 }
@@ -194,12 +234,18 @@ class TouchInputController {
                         handled = true
                     } else if (pId == lookPointerId) {
                         // Check if this pointer is also the interaction pointer
-                        if (pId == interactPointerId) {
-                            val dragDistance = hypot(x - interactStartX, y - interactStartY)
-                            if (dragDistance > touchSlop) {
-                                isInteractDragging = true
-                                worldScene?.cancelMining()
+                        var startedDrag = false
+                        synchronized(inputLock) {
+                            if (pId == interactPointerId) {
+                                val dragDistance = hypot(x - interactStartX, y - interactStartY)
+                                if (dragDistance > touchSlop) {
+                                    isInteractDragging = true
+                                    startedDrag = true
+                                }
                             }
+                        }
+                        if (startedDrag) {
+                            worldScene?.cancelMining()
                         }
 
                         // Apply direct camera rotation if dragging or not interacting
@@ -209,9 +255,10 @@ class TouchInputController {
                             lastLookX = x
                             lastLookY = y
 
-                            // Direct Minecraft-style camera rotation with NO inertia
+                            // Direct Minecraft-style camera rotation with NO inertia (invert Y reverses pitch)
+                            val pitchSign = if (invertYAxis) 1f else -1f
                             player.yaw = (player.yaw + dx * lookSensitivityX) % 360f
-                            player.pitch = (player.pitch - dy * lookSensitivityY).coerceIn(-89f, 89f)
+                            player.pitch = (player.pitch + pitchSign * dy * lookSensitivityY).coerceIn(-89f, 89f)
                             handled = true
                         } else {
                             // Stationary interaction: maintain last position without rotation
@@ -220,9 +267,17 @@ class TouchInputController {
                         }
                     } else if (pId == interactPointerId) {
                         // Secondary dedicated interaction pointer
-                        val dragDistance = hypot(x - interactStartX, y - interactStartY)
-                        if (dragDistance > touchSlop) {
-                            isInteractDragging = true
+                        var startedDrag = false
+                        synchronized(inputLock) {
+                            if (pId == interactPointerId) {
+                                val dragDistance = hypot(x - interactStartX, y - interactStartY)
+                                if (dragDistance > touchSlop) {
+                                    isInteractDragging = true
+                                    startedDrag = true
+                                }
+                            }
+                        }
+                        if (startedDrag) {
                             worldScene?.cancelMining()
                         }
                         handled = true
@@ -260,7 +315,8 @@ class TouchInputController {
         appState: AppState,
         buttons: List<UiButton>,
         onButtonClick: ((MenuButtonId) -> Unit)?,
-        onSliderTouch: ((Float, Float, Int) -> Boolean)?
+        onSliderTouch: ((Float, Float, Int) -> Boolean)?,
+        onUiButtonClick: ((UiButton) -> Unit)?
     ): Boolean {
         if (event.pointerCount <= 0) return false
         val action = event.actionMasked
@@ -287,8 +343,9 @@ class TouchInputController {
                         }
                     }
 
-                    // In SETTINGS, allow slider track interaction
-                    if (appState == AppState.SETTINGS && onSliderTouch != null && onSliderTouch(x, y, action)) {
+                    // In SETTINGS or DEBUG_OPTIONS, allow slider/scroll interaction
+                    val isSettingsState = (appState == AppState.SETTINGS || appState == AppState.DEBUG_OPTIONS)
+                    if (isSettingsState && onSliderTouch != null && onSliderTouch(x, y, action)) {
                         activeSliderPointerId = pointerId
                         return true
                     }
@@ -297,8 +354,9 @@ class TouchInputController {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                val isSettingsState = (appState == AppState.SETTINGS || appState == AppState.DEBUG_OPTIONS)
                 val sliderPid = activeSliderPointerId
-                if (sliderPid != null && appState == AppState.SETTINGS && onSliderTouch != null) {
+                if (sliderPid != null && isSettingsState && onSliderTouch != null) {
                     val idx = event.findPointerIndex(sliderPid)
                     if (idx in 0 until event.pointerCount) {
                         onSliderTouch(event.getX(idx), event.getY(idx), MotionEvent.ACTION_MOVE)
@@ -336,7 +394,11 @@ class TouchInputController {
                     activeMenuPointerId = null
 
                     if (pressed != null && pressed.enabled && pressed.rect.contains(x, y)) {
-                        onButtonClick?.invoke(pressed.id)
+                        if (pressed.id == MenuButtonId.SETTINGS_DYNAMIC && onUiButtonClick != null) {
+                            onUiButtonClick.invoke(pressed)
+                        } else {
+                            onButtonClick?.invoke(pressed.id)
+                        }
                     }
                     return true
                 }
@@ -370,11 +432,23 @@ class TouchInputController {
         }
 
         // Interaction release
-        if (pointerId == interactPointerId) {
+        val wasInteractPointer: Boolean
+        val downTimeSnapshot: Long
+        val wasDraggingSnapshot: Boolean
+        synchronized(inputLock) {
+            wasInteractPointer = (pointerId == interactPointerId)
+            downTimeSnapshot = interactDownTimeMs
+            wasDraggingSnapshot = isInteractDragging
+            if (wasInteractPointer) {
+                interactPointerId = null
+                isInteractDragging = false
+            }
+        }
+        if (wasInteractPointer) {
             val now = SystemClock.uptimeMillis()
-            val duration = now - interactDownTimeMs
+            val duration = now - downTimeSnapshot
 
-            if (!isInteractDragging && worldScene != null) {
+            if (!wasDraggingSnapshot && worldScene != null) {
                 if (duration < holdMiningDelayMs && !worldScene.isMining) {
                     val heldBlock = worldScene.selectedItem.associatedBlock
                     val hasPlaceableBlock = heldBlock != null && heldBlock != com.nitrous.tessellate.world.BlockType.AIR
@@ -394,9 +468,6 @@ class TouchInputController {
             } else {
                 worldScene?.cancelMining()
             }
-
-            interactPointerId = null
-            isInteractDragging = false
         }
 
         // Camera look release
@@ -409,10 +480,13 @@ class TouchInputController {
      * Called every game frame to update hold-to-mine progress based on block hardness.
      */
     fun updateInteraction(deltaTimeSeconds: Float, worldScene: WorldScene) {
-        val pId = interactPointerId ?: return
-        if (isInteractDragging) return
+        val downTimeMs: Long
+        synchronized(inputLock) {
+            if (interactPointerId == null || isInteractDragging) return
+            downTimeMs = interactDownTimeMs
+        }
 
-        val elapsed = SystemClock.uptimeMillis() - interactDownTimeMs
+        val elapsed = SystemClock.uptimeMillis() - downTimeMs
         if (elapsed >= holdMiningDelayMs) {
             val hit = worldScene.currentTargetHit
             if (hit != null) {
@@ -505,8 +579,9 @@ class TouchInputController {
         val dy = y - lastLookY
         lastLookX = x
         lastLookY = y
+        val pitchSign = if (invertYAxis) 1f else -1f
         player.yaw = (player.yaw + dx * lookSensitivityX) % 360f
-        player.pitch = (player.pitch - dy * lookSensitivityY).coerceIn(-89f, 89f)
+        player.pitch = (player.pitch + pitchSign * dy * lookSensitivityY).coerceIn(-89f, 89f)
     }
 
     fun simulateLookRelease() {
@@ -517,8 +592,10 @@ class TouchInputController {
         activeDpadPointers.clear()
         activeJumpPointers.clear()
         lookPointerId = null
-        interactPointerId = null
-        isInteractDragging = false
+        synchronized(inputLock) {
+            interactPointerId = null
+            isInteractDragging = false
+        }
         isUpPressed = false
         isDownPressed = false
         isLeftPressed = false

@@ -170,4 +170,48 @@ class Tdd009FrustumAndAsyncTest {
             assertTrue(content.contains("SettingsManager.kt"))
         }
     }
+
+    @Test
+    fun `chunk mesh skips empty chunks and culls cross-chunk boundary faces via neighbor fast path`() {
+        val world = World(chunksX = 2, chunksY = 1, chunksZ = 1)
+        for (x in 0 until world.sizeX) {
+            for (y in 0 until world.sizeY) {
+                for (z in 0 until world.sizeZ) {
+                    world.setBlock(x, y, z, com.nitrous.tessellate.world.BlockType.AIR)
+                }
+            }
+        }
+        val pipeline = com.nitrous.tessellate.texture.TexturePipeline(context)
+        pipeline.createAtlasBitmap().recycle()
+
+        // Empty chunk fast path
+        val emptyChunk = world.getChunk(0, 0, 0)!!
+        emptyChunk.recalculateEmpty()
+        assertTrue(emptyChunk.isEmpty)
+        val emptyMesh = com.nitrous.tessellate.world.ChunkMesh(emptyChunk)
+        emptyMesh.generateMeshData(world, pipeline)
+        assertEquals(0, emptyMesh.generatedFacesCount)
+        assertEquals(0, emptyMesh.culledFacesCount)
+        assertEquals(1, emptyMesh.rebuildCount)
+        assertFalse(emptyChunk.needsMeshRebuild)
+
+        // Cross-chunk neighbor boundary culling: stone at (15, 4, 4) in chunk 0 adjacent to stone at (16, 4, 4) in chunk 1
+        world.setBlock(15, 4, 4, com.nitrous.tessellate.world.BlockType.STONE)
+        world.setBlock(16, 4, 4, com.nitrous.tessellate.world.BlockType.STONE)
+
+        val mesh0 = com.nitrous.tessellate.world.ChunkMesh(world.getChunk(0, 0, 0)!!)
+        val mesh1 = com.nitrous.tessellate.world.ChunkMesh(world.getChunk(1, 0, 0)!!)
+        mesh0.generateMeshData(world, pipeline)
+        mesh1.generateMeshData(world, pipeline)
+
+        assertEquals("Boundary-adjacent stone in chunk 0 must expose 5 faces", 5, mesh0.opaqueFacesCount)
+        assertEquals("Boundary-adjacent stone in chunk 1 must expose 5 faces", 5, mesh1.opaqueFacesCount)
+        assertTrue(mesh0.culledFacesCount >= 1)
+        assertTrue(mesh1.culledFacesCount >= 1)
+
+        // Topology version increments on chunk replacement/generation
+        val vBefore = world.chunkTopologyVersion.get()
+        world.generateTerrain()
+        assertTrue(world.chunkTopologyVersion.get() > vBefore)
+    }
 }

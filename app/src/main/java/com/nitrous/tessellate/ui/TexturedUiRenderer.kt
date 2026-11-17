@@ -88,6 +88,7 @@ class TexturedUiRenderer(
     private var hudBitmap: Bitmap? = null
     private var hudCanvas: Canvas? = null
     private var hudTextureHandle: Int = 0
+    private var hudTextureAllocated: Boolean = false
     private val hudWidth: Int = 540
     private val hudHeight: Int = 170
     private var lastHudUpdateMs: Long = 0
@@ -96,11 +97,37 @@ class TexturedUiRenderer(
     @Volatile
     private var hudDirty: Boolean = true
 
-    // Telemetry
+    // Telemetry & HUD visibility flags
     @Volatile
     var currentFps: Int = 60
     @Volatile
     var currentFrameTimeMs: Float = 16.6f
+    @Volatile
+    var showCoordinates: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidateHud()
+            }
+        }
+    @Volatile
+    var showDebugHud: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidateHud()
+            }
+        }
+    @Volatile
+    var uiScale: Float = 1.0f
+        set(value) {
+            val clamped = value.coerceIn(0.75f, 1.25f)
+            if (field != clamped) {
+                field = clamped
+                computeLayout(engine.currentSceneMode)
+                invalidateHud()
+            }
+        }
 
     private data class HotbarLayoutSnapshot(
         val bounds: RectF = RectF(),
@@ -290,6 +317,7 @@ class TexturedUiRenderer(
             hudBitmap = Bitmap.createBitmap(hudWidth, hudHeight, Bitmap.Config.ARGB_8888)
             hudCanvas = Canvas(hudBitmap!!)
         }
+        hudTextureAllocated = false
         updateHudBitmap(engine.currentSceneMode)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
     }
@@ -323,6 +351,11 @@ class TexturedUiRenderer(
         if (newState == AppState.WORLD_SELECT) {
             worldSelectScreen.refreshWorlds()
         }
+        if (newState == AppState.SETTINGS) {
+            settingsScreen.setScreenTarget(com.nitrous.tessellate.settings.SettingScreenTarget.SETTINGS)
+        } else if (newState == AppState.DEBUG_OPTIONS) {
+            settingsScreen.setScreenTarget(com.nitrous.tessellate.settings.SettingScreenTarget.DEBUG_OPTIONS)
+        }
         if (newState == AppState.PLAYING) {
             invalidateHud()
         }
@@ -353,7 +386,7 @@ class TexturedUiRenderer(
             AppState.MENU -> mainMenuButtons
             AppState.WORLD_SELECT -> worldSelectScreen.buttons
             AppState.CREATE_WORLD -> createWorldScreen.buttons
-            AppState.SETTINGS -> settingsScreen.buttons
+            AppState.SETTINGS, AppState.DEBUG_OPTIONS -> settingsScreen.getInteractiveButtons()
             AppState.PLAYING -> if (isPaused) pauseScreen.buttons else emptyList()
         }
     }
@@ -398,7 +431,8 @@ class TexturedUiRenderer(
         }
 
         // Jump Button: positioned at bottom-right corner, scaled to match on-screen size of D-pad elements
-        val dpadSize = (screenHeight * 0.48f).coerceIn(180f, 270f)
+        val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
+        val dpadSize = ((screenHeight * 0.48f).coerceIn(180f, 270f)) * scaleFactor
         val jumpSize = dpadSize * 0.56f
         val jumpMargin = 36f
         val bottom = screenHeight - 24f
@@ -441,31 +475,32 @@ class TexturedUiRenderer(
     }
 
     private fun buildWorldHotbarSnapshot(): HotbarLayoutSnapshot {
-        val dpadSize = (screenHeight * 0.48f).coerceIn(180f, 270f)
+        val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
+        val dpadSize = ((screenHeight * 0.48f).coerceIn(180f, 270f)) * scaleFactor
         val jumpSize = dpadSize * 0.56f
         val jumpMargin = 36f
         val reservedLeft = 36f + dpadSize + 20f
         val reservedRight = jumpMargin + jumpSize + 20f
         val availableCenterWidth = (screenWidth - reservedLeft - reservedRight).coerceAtLeast(182f * 2.0f)
-        val uiScale = minOf(
-            (screenHeight / 250f).coerceIn(2.5f, 4.0f),
+        val hotbarScale = minOf(
+            ((screenHeight / 250f) * scaleFactor).coerceIn(2.0f, 4.5f),
             availableCenterWidth / 182f
         )
 
-        val hotbarW = 182f * uiScale
-        val hotbarH = 22f * uiScale
+        val hotbarW = 182f * hotbarScale
+        val hotbarH = 22f * hotbarScale
         val hotbarLeft = (screenWidth - hotbarW) / 2f
         val hotbarTop = screenHeight - hotbarH - 20f
         val bounds = RectF(hotbarLeft, hotbarTop, hotbarLeft + hotbarW, hotbarTop + hotbarH)
 
         val slots = ArrayList<RectF>(Inventory.HOTBAR_SIZE)
         for (i in 0 until Inventory.HOTBAR_SIZE) {
-            val left = hotbarLeft + (1f + i * 20f) * uiScale
-            val top = hotbarTop + 1f * uiScale
-            val slotDim = 20f * uiScale
+            val left = hotbarLeft + (1f + i * 20f) * hotbarScale
+            val top = hotbarTop + 1f * hotbarScale
+            val slotDim = 20f * hotbarScale
             slots.add(RectF(left, top, left + slotDim, top + slotDim))
         }
-        return HotbarLayoutSnapshot(bounds = bounds, slots = slots, scale = uiScale)
+        return HotbarLayoutSnapshot(bounds = bounds, slots = slots, scale = hotbarScale)
     }
 
     private fun buildShowcaseHotbarSnapshot(): HotbarLayoutSnapshot {
@@ -505,7 +540,7 @@ class TexturedUiRenderer(
             AppState.MENU -> renderMainMenu(shader, pipeline)
             AppState.WORLD_SELECT -> renderWorldSelectMenu(shader, pipeline)
             AppState.CREATE_WORLD -> renderCreateWorldMenu(shader, pipeline)
-            AppState.SETTINGS -> renderSettingsMenu(shader, pipeline)
+            AppState.SETTINGS, AppState.DEBUG_OPTIONS -> renderSettingsMenu(shader, pipeline)
             AppState.PLAYING -> {
                 if (isPaused) {
                     renderPauseMenu(shader, pipeline)
@@ -738,8 +773,25 @@ class TexturedUiRenderer(
         // 4. Minimal Top-Right Utility Buttons (Menu & Regen)
         drawInGameButtons(shader, pipeline, sceneMode)
 
-        // 5. Diagnostic HUD (Top Left)
-        drawDiagnosticHud(shader)
+        // 5. Diagnostic HUD / Coordinates overlay (Top Left)
+        if (showDebugHud) {
+            drawDiagnosticHud(shader)
+        } else if (showCoordinates && sceneMode == SceneMode.WORLD) {
+            val p = engine.worldScene.player
+            val coordText = "XYZ: %.1f, %.1f, %.1f".format(p.posX, p.posY, p.posZ)
+            drawQuad(shader, 16f, 16f, 290f, 36f, 0.05f, 0.07f, 0.10f, 0.72f)
+            bitmapFontRenderer.drawText(
+                shader = shader,
+                orthoMatrix = orthoMatrix,
+                quadVaoId = quadVaoId,
+                text = coordText,
+                x = 24f,
+                y = 26f,
+                scale = 2,
+                r = 0.95f, g = 0.98f, b = 0.96f, a = 1f,
+                shadow = true
+            )
+        }
     }
 
     private fun drawWidgetButton(
@@ -1234,10 +1286,12 @@ class TexturedUiRenderer(
 
             textPaint.color = Color.WHITE
             val p = engine.worldScene.player
-            val crouchStr = if (p.isCrouching) "CROUCH" else "STAND"
-            val groundStr = if (p.isGrounded) "GROUNDED" else "AIRBORNE"
-            canvas.drawText("Pos: %.1f, %.1f, %.1f | %s | %s".format(p.posX, p.posY, p.posZ, crouchStr, groundStr), 16f, y, textPaint)
-            y += lineSpacing
+            if (showCoordinates) {
+                val crouchStr = if (p.isCrouching) "CROUCH" else "STAND"
+                val groundStr = if (p.isGrounded) "GROUNDED" else "AIRBORNE"
+                canvas.drawText("Pos: %.1f, %.1f, %.1f | %s | %s".format(p.posX, p.posY, p.posZ, crouchStr, groundStr), 16f, y, textPaint)
+                y += lineSpacing
+            }
 
             canvas.drawText("FPS: $currentFps (%.1f ms) | Slot: ${p.inventory.selectedSlot + 1}/9".format(currentFrameTimeMs), 16f, y, textPaint)
             y += lineSpacing
@@ -1270,7 +1324,12 @@ class TexturedUiRenderer(
         }
 
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, hudTextureHandle)
-        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bmp, 0)
+        if (!hudTextureAllocated) {
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bmp, 0)
+            hudTextureAllocated = true
+        } else {
+            GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, bmp)
+        }
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
     }
 
@@ -1491,6 +1550,7 @@ class TexturedUiRenderer(
             val texArr = intArrayOf(hudTextureHandle)
             GLES30.glDeleteTextures(1, texArr, 0)
             hudTextureHandle = 0
+            hudTextureAllocated = false
         }
 
         hudCanvas = null
