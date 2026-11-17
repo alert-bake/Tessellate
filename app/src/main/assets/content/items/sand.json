@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:sand",
+  "display_name": "Sand",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:sand"
+}

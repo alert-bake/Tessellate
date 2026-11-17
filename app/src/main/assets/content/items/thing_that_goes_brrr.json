@@ -1,0 +1,7 @@
+{
+  "id": "Developer:thing_that_goes_brrr",
+  "display_name": "Thing That Goes Brrr",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "Developer:thing_that_goes_brrr"
+}

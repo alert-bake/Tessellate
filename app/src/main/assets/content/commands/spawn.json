@@ -1,0 +1,6 @@
+{
+  "name": "spawn",
+  "description": "Spawns an entity in front of the player.",
+  "usage": "/spawn <entity_id>",
+  "action": "spawn"
+}

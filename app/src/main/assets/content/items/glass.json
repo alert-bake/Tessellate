@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:glass",
+  "display_name": "Glass",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:glass"
+}

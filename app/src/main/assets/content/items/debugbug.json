@@ -1,0 +1,7 @@
+{
+  "id": "Debug:debugbug",
+  "display_name": "Debug Bug",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "Debug:debugbug"
+}

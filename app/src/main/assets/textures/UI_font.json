@@ -1,0 +1,23 @@
+{
+  "lineHeight": 7,
+  "spaceWidth": 5,
+  "charGap": 1,
+  "monospace": true,
+  "pages": [
+    {
+      "texture": "UI_font_ascii.png",
+      "cols": 16,
+      "rows": 6,
+      "glyphWidth": 5,
+      "glyphHeight": 7,
+      "chars": [
+        " !\"#$%&'()*+,-./",
+        "0123456789:;<=>?",
+        "@ABCDEFGHIJKLMNO",
+        "PQRSTUVWXYZ[\\]^_",
+        "`abcdefghijklmno",
+        "pqrstuvwxyz{|}~"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "tessellate:stone",
+  "hardness": 1.5,
+  "is_opaque": true,
+  "is_transparent": false,
+  "is_solid": true,
+  "is_simple": true,
+  "textures": {
+    "all": "block_stone"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "id": "prototesselate:stone",
+  "display_name": "Proto Stone",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "prototesselate:stone"
+}

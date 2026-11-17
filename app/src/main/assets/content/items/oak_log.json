@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:oak_log",
+  "display_name": "Oak Log",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:oak_log"
+}

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Isometric voxel cube centered in the 66dp adaptive icon safe zone -->
+    <!-- Top face -->
+    <path
+        android:fillColor="#5EEAD4"
+        android:pathData="M54,28 L76.5,41 L54,54 L31.5,41 Z" />
+    <path
+        android:fillColor="#99F6E4"
+        android:pathData="M54,32.5 L69.5,41.4 L54,50.3 L38.5,41.4 Z" />
+
+    <!-- Left face -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M31.5,41 L54,54 L54,80 L31.5,67 Z" />
+    <path
+        android:fillColor="#0284C7"
+        android:pathData="M35.5,47.5 L50,55.8 L50,73 L35.5,64.7 Z" />
+
+    <!-- Right face -->
+    <path
+        android:fillColor="#6366F1"
+        android:pathData="M54,54 L76.5,41 L76.5,67 L54,80 Z" />
+    <path
+        android:fillColor="#4338CA"
+        android:pathData="M58,55.8 L72.5,47.5 L72.5,64.7 L58,73 Z" />
+</vector>

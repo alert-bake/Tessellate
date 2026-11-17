@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Tessellate</string>
+    <string name="console_toggle_label">&gt;_</string>
+    <string name="console_toggle_cd">Open developer command console</string>
+    <string name="console_input_hint">/give tessellate:cobblestone 5</string>
+    <string name="console_run_label">RUN</string>
+    <string name="console_close_cd">Close developer command console</string>
+    <string name="create_world_name_hint">New World</string>
+    <string name="create_world_seed_hint">Random</string>
+</resources>

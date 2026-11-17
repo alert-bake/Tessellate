@@ -1,0 +1,13 @@
+{
+  "id": "tessellate:grass",
+  "hardness": 0.6,
+  "is_opaque": true,
+  "is_transparent": false,
+  "is_solid": true,
+  "is_simple": true,
+  "textures": {
+    "top": "proto_grass",
+    "side": "proto_grass_side",
+    "bottom": "proto_dirt"
+  }
+}

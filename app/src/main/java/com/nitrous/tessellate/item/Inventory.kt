@@ -1,0 +1,116 @@
+package com.nitrous.tessellate.item
+
+import com.nitrous.tessellate.registry.Identifier
+import java.util.Locale
+
+/**
+ * Single stack of items stored in an [Inventory] slot.
+ */
+data class ItemStack(
+    val itemId: String,
+    var count: Int
+)
+
+/**
+ * Player 9-slot hotbar inventory managing stacked [ItemStack] entries and active slot selection.
+ */
+class Inventory(
+    val size: Int = HOTBAR_SIZE
+) {
+    private val lock = Any()
+    private val slots = arrayOfNulls<ItemStack>(size)
+
+    @Volatile
+    var selectedSlot: Int = 0
+        set(value) {
+            field = value.coerceIn(0, size - 1)
+        }
+
+    fun selectSlot(index: Int): Boolean {
+        if (index !in 0 until size) return false
+        selectedSlot = index
+        return true
+    }
+
+    fun getSlot(index: Int): ItemStack? = synchronized(lock) {
+        if (index !in 0 until size) return null
+        return slots[index]
+    }
+
+    fun setSlot(index: Int, stack: ItemStack?) = synchronized(lock) {
+        if (index !in 0 until size) return
+        slots[index] = if (stack != null && stack.count > 0) stack else null
+    }
+
+    fun getSelectedStack(): ItemStack? = synchronized(lock) {
+        getSlot(selectedSlot)
+    }
+
+    /**
+     * Adds [amount] of [itemId] into the inventory, stacking into matching existing slots first
+     * and overflowing into the earliest empty slot(s).
+     * Returns leftover count that could not fit (0 if all items were added).
+     */
+    fun addItem(itemId: String, amount: Int = 1): Int = synchronized(lock) {
+        if (amount <= 0 || itemId.isBlank()) return 0
+
+        val registered = ItemRegistry.get(itemId)
+        val canonicalId = registered?.identifier?.toCanonicalString() ?: itemId
+        val maxStack = (registered?.maxStackSize ?: DEFAULT_MAX_STACK).coerceAtLeast(1)
+        val normalizedTarget = normalizeId(canonicalId)
+
+        var remaining = amount
+
+        // Pass 1: stack onto existing matching slots with available capacity
+        for (i in 0 until size) {
+            if (remaining <= 0) break
+            val existing = slots[i] ?: continue
+            if (normalizeId(existing.itemId) == normalizedTarget && existing.count < maxStack) {
+                val space = maxStack - existing.count
+                val added = minOf(remaining, space)
+                existing.count += added
+                remaining -= added
+            }
+        }
+
+        // Pass 2: place remaining items into empty slots
+        for (i in 0 until size) {
+            if (remaining <= 0) break
+            if (slots[i] == null) {
+                val placed = minOf(remaining, maxStack)
+                slots[i] = ItemStack(itemId = canonicalId, count = placed)
+                remaining -= placed
+            }
+        }
+
+        return remaining
+    }
+
+    fun getTotalCount(itemId: String): Int = synchronized(lock) {
+        val target = normalizeId(itemId)
+        var total = 0
+        for (i in 0 until size) {
+            val stack = slots[i] ?: continue
+            if (normalizeId(stack.itemId) == target) {
+                total += stack.count
+            }
+        }
+        return total
+    }
+
+    fun clear() = synchronized(lock) {
+        for (i in 0 until size) {
+            slots[i] = null
+        }
+        selectedSlot = 0
+    }
+
+    private fun normalizeId(id: String): String {
+        return Identifier.parseOrNull(id)?.toNormalizedString() ?: id.lowercase(Locale.ROOT)
+    }
+
+    companion object {
+        const val HOTBAR_SIZE = 9
+        const val DEFAULT_MAX_STACK = 64
+    }
+}

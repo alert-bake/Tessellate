@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:air",
+  "display_name": "Air",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:air"
+}

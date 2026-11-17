@@ -1,0 +1,6 @@
+{
+  "name": "instamine",
+  "description": "Toggles instant block breaking for rapid terrain testing.",
+  "usage": "/instamine",
+  "action": "instamine"
+}

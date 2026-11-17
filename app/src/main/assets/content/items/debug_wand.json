@@ -1,0 +1,6 @@
+{
+  "id": "Debug:debug_wand",
+  "display_name": "Debug Wand",
+  "max_stack_size": 1,
+  "item_type": "DEBUG"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "Developer:thing_that_goes_brrr",
+  "hardness": 0.8,
+  "is_opaque": true,
+  "is_transparent": false,
+  "is_solid": true,
+  "is_simple": true,
+  "textures": {
+    "top": "proto_debugbug",
+    "side": "proto_stone",
+    "bottom": "proto_stone"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "clear",
+  "description": "Clears all items from the player's inventory.",
+  "usage": "/clear",
+  "action": "clear"
+}

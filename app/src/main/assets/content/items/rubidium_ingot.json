@@ -1,0 +1,6 @@
+{
+  "id": "tessellate:rubidium_ingot",
+  "display_name": "Rubidium Ingot",
+  "max_stack_size": 64,
+  "item_type": "MATERIAL"
+}

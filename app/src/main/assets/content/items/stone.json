@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:stone",
+  "display_name": "Stone",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:stone"
+}

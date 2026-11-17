@@ -1,0 +1,11 @@
+{
+  "id": "tessellate:dirt",
+  "hardness": 0.5,
+  "is_opaque": true,
+  "is_transparent": false,
+  "is_solid": true,
+  "is_simple": true,
+  "textures": {
+    "all": "proto_dirt"
+  }
+}

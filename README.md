@@ -1,11 +1,20 @@
-<div align="center">
+# Tesselate
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+An Android-first voxel sandbox experiment focused on exploration, building, and modpack-style progression.
 
-  <h1>Built with AI Studio</h2>
+## Status
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+Early development. Gameplay systems and project structure are still changing; this is not a release build.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Technology
 
-</div>
+- Kotlin
+- Android
+- OpenGL ES 3.0
+- LWKGL — Tesselate's lightweight Kotlin graphics layer
+
+## Direction
+
+Tesselate takes inspiration from sandbox games and the layered progression of modded Minecraft. Its goal is to build a flexible world and progression experience, rather than a traditional RPG.
+
+More details will be added as the project develops.

@@ -1,0 +1,6 @@
+{
+  "name": "Tessellate",
+  "description": "Voxel graphics runtime and prototype texture pipeline on OpenGL ES 3",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "give",
+  "description": "Adds items to the player's hotbar inventory.",
+  "usage": "/give <item_id> [count]",
+  "action": "give"
+}

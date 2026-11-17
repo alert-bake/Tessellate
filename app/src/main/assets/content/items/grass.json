@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:grass",
+  "display_name": "Grass Block",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:grass"
+}

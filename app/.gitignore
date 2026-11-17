@@ -1,0 +1,6 @@
+# App module build outputs
+/build/
+build/
+**/build/**
+*.iml
+.cxx/

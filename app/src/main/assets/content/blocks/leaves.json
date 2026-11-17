@@ -1,0 +1,11 @@
+{
+  "id": "tessellate:leaves",
+  "hardness": 0.2,
+  "is_opaque": false,
+  "is_transparent": true,
+  "is_solid": true,
+  "is_simple": false,
+  "textures": {
+    "all": "block_leaves"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "tessellate:cobblestone",
+  "hardness": 2.0,
+  "is_opaque": true,
+  "is_transparent": false,
+  "is_solid": true,
+  "is_simple": true,
+  "textures": {
+    "all": "block_cobblestone"
+  }
+}

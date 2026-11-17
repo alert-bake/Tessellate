@@ -1,0 +1,11 @@
+{
+  "id": "tessellate:glass",
+  "hardness": 0.3,
+  "is_opaque": false,
+  "is_transparent": true,
+  "is_solid": true,
+  "is_simple": false,
+  "textures": {
+    "all": "block_glass"
+  }
+}

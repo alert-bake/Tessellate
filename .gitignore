@@ -1,0 +1,55 @@
+# AI Studio Internal Folders & Artifacts
+.aistudio/
+/.aistudio/
+**/.aistudio/**
+public/
+/public/
+**/public/**
+
+# Environment & Sensitive Credentials
+.env
+.env.*
+local.properties
+/local.properties
+*.jks
+*.keystore
+release-keystore.jks
+release.keystore
+my-upload-key.jks
+debug.keystore
+debug.keystore.base64
+*.key
+*.pem
+*.p12
+signing.properties
+release-signing.properties
+release-keystore-base64.txt
+*.base64.txt
+
+# Gradle & Build Outputs
+.gradle/
+/.gradle/
+**/.gradle/**
+build/
+/build/
+app/build/
+**/build/**
+.kotlin/
+/.kotlin/
+**/.kotlin/**
+bin/
+**/bin/**
+
+# IDE & Editor Files
+*.iml
+.idea/
+/.idea/
+**/.idea/**
+.vscode/
+**/.vscode/**
+.DS_Store
+Thumbs.db
+/captures/
+.externalNativeBuild/
+.cxx/
+*.hprof

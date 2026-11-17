@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:dirt",
+  "display_name": "Dirt",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:dirt"
+}
