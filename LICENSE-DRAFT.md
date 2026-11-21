@@ -27,6 +27,8 @@ This draft must be interpreted according to its actual wording and applicable la
 - **Source Code** means the preferred form of a work for making modifications.
 - **Object Code** means a compiled or otherwise machine-readable form that is not the preferred form for modification.
 - **Distribution** means conveying a copy of a Covered Work to another person or entity. Merely running a copy without conveying it is not distribution.
+- **Network use** means operating a modified Covered Work so that users can interact with it remotely through a computer network.
+- **Corresponding Source** means the complete Source Code and associated materials required by Sections 4.3 and 4.7 for the particular distributed or network-operated version.
 - **Necessary Patent Claims** means patent claims owned or controlled by a party that would be infringed by exercising permissions expressly granted for that party's contribution or covered material, excluding claims infringed only because of further modifications or combinations not supplied by that party.
 
 ## 3. Copyright license and permissions
@@ -54,7 +56,19 @@ No ownership of the original Project is transferred to You.
 
 4.4. You may distribute the Covered Work in any medium and may charge any price, provided that you also comply with the source, notice, and licensing requirements.
 
-4.5. Merely using or running the Covered Work, including running a modified copy on a server without conveying a copy to another party, does not by itself trigger a source-distribution obligation under this draft. A future version could add network-use requirements, but this draft does not.
+4.5. Merely using or running an unmodified copy of the Covered Work privately, without conveying it or making it available for remote interaction by users, does not by itself trigger a source-distribution obligation under this section.
+
+4.6. **Network use of modified versions.** If You modify the Covered Work and operate that modified version so that users can interact with it remotely through a computer network, You must prominently offer each such user, at no charge and through a reasonably accessible method, the complete Corresponding Source of the version with which that user interacts.
+
+4.7. **Corresponding Source for network use.** The Corresponding Source must include the source code for the modified version actually operated, including modifications to the Covered Work and the scripts, build files, configuration, and other materials necessary to generate, install, run, and modify that version. It need not include source code for independent programs or general-purpose services that are not part of the Covered Work. The final license must define the treatment of system libraries, standard tools, and separately licensed components consistently with its copyleft scope.
+
+4.8. **Form and access.** The source offer must be clear, durable for as long as the network service is offered, and sufficient for users to obtain the Corresponding Source without paying a source-access fee. If the service provides a user interface, the offer should be placed in or linked from a location users can reasonably find, such as its legal notices, about page, or source-code link.
+
+4.9. **No broader publication duty.** This network-use condition applies to the modified Covered Work made available for remote interaction. It does not, by itself, require publication of unrelated software, independent services, private modifications that are not offered for remote interaction, or the operator's entire infrastructure.
+
+4.10. **No evasion by hosting.** A Licensee may not avoid the obligations of this section merely by providing access to a modified Covered Work over a network instead of distributing copies of it.
+
+4.11. The final version should be reviewed against the network-interaction provision of GNU AGPLv3, particularly its definitions of modified versions, corresponding source, and user interaction, before adoption.
 
 ## 5. Attribution and preservation of notices
 
