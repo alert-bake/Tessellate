@@ -6,6 +6,8 @@
 
 ## Executive summary
 
+> **Current repository license:** GNU AGPL-3.0-only. The TSL-1.0 draft is not in force and does not modify existing AGPL permissions. Any future change requires authority from all relevant copyright holders.
+
 TSL is a proposed custom copyleft license for Tessellate. The current design combines:
 
 - GPL-style permissions and copyleft for distributed covered works;
@@ -14,7 +16,7 @@ TSL is a proposed custom copyleft license for Tessellate. The current design com
 - attribution and project-origin notices;
 - separate treatment for trademarks, independent programs, plugins, and third-party components.
 
-This is still a custom draft. It has not been reviewed by a qualified lawyer, approved by the Open Source Initiative (OSI), or tested for compatibility with other licenses.
+This is still a custom draft for possible future consideration. It is not the current project license, has not been reviewed by a qualified lawyer, approved by the Open Source Initiative (OSI), or tested for compatibility with other licenses. The current repository license is GNU AGPL-3.0-only.
 
 ## Research findings and design choices
 
@@ -113,3 +115,8 @@ If the priority is a widely recognized open-source license with network copyleft
 ---
 
 This document is research support for the project owner. It is not legal advice and does not create or amend license terms.
+
+
+## Current licensing decision
+
+Tessellate's repository now contains the unmodified GNU AGPLv3 license text in `LICENSE`, and the README identifies the project license as `AGPL-3.0-only`. The TSL draft remains separate and unadopted. A later move to TSL or another license would require the relevant copyright holders to have authority to relicense every covered contribution; the AGPL rights already granted to existing recipients cannot simply be withdrawn.
