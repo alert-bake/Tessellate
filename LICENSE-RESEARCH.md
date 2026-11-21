@@ -1,7 +1,7 @@
 # TSL-1.0 Research and Review Notes
 
 **Status:** Internal design notes for the TSL-1.0 working draft. Not legal advice and not part of the license grant.  
-**Reviewed draft:** `LICENSE-DRAFT.md`, Version 2.4  
+**Reviewed draft:** TSL-1.0 Version 2.4, preserved in Git history and removed from the current working tree  
 **Research date:** 2026-11-21
 
 ## Executive summary
@@ -108,9 +108,9 @@ These references are starting points, not a legal opinion about how any provisio
 
 ## Recommendation
 
-Keep the current repository file named `LICENSE-DRAFT.md`. Do not create a root `LICENSE` file claiming TSL-1.0 is in force until the terms are reviewed, the rights being licensed are identified, and the final text is approved by the relevant rights holders.
+The project has chosen unmodified GNU AGPL-3.0-only as its current license. The TSL-1.0 draft was removed from the current working tree to keep the repository focused; its earlier versions remain recoverable from Git history. Do not treat any historical TSL draft as an operative license.
 
-If the priority is a widely recognized open-source license with network copyleft, compare using unmodified AGPL-3.0 plus a separate trademark policy and attribution notices. If the priority is a custom Nitrous-specific license, continue TSL development but expect additional review and possible compatibility costs.
+If TSL is reconsidered, develop it in a separate branch or repository and obtain qualified legal review before adopting it. Keep the active `LICENSE` file and README consistent with the license actually governing the project.
 
 ---
 
@@ -119,4 +119,4 @@ This document is research support for the project owner. It is not legal advice 
 
 ## Current licensing decision
 
-Tessellate's repository now contains the unmodified GNU AGPLv3 license text in `LICENSE`, and the README identifies the project license as `AGPL-3.0-only`. The TSL draft remains separate and unadopted. A later move to TSL or another license would require the relevant copyright holders to have authority to relicense every covered contribution; the AGPL rights already granted to existing recipients cannot simply be withdrawn.
+Tessellate's repository now contains the unmodified GNU AGPLv3 license text in `LICENSE`, and the README identifies the project license as `AGPL-3.0-only`. The TSL draft is no longer present in the current working tree; its committed versions remain in Git history and are unadopted. A later move to TSL or another license would require the relevant copyright holders to have authority to relicense every covered contribution; the AGPL rights already granted to existing recipients cannot simply be withdrawn.
