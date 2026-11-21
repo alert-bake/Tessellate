@@ -1,5 +1,5 @@
 # TESSELLATE SOFTWARE LICENSE (TSL-1.0)
-## Working Draft — Version 2.1
+## Working Draft — Version 2.3
 
 **Status: DISCUSSION DRAFT ONLY. NOT AN OPERATIVE LICENSE.**  
 **Project:** Tessellate  
@@ -29,6 +29,7 @@ This draft must be interpreted according to its actual wording and applicable la
 - **Distribution** means conveying a copy of a Covered Work to another person or entity. Merely running a copy without conveying it is not distribution.
 - **Network use** means operating a modified Covered Work so that users can interact with it remotely through a computer network.
 - **Corresponding Source** means the complete Source Code and associated materials required by Sections 4.3 and 4.7 for the particular distributed or network-operated version.
+- **Network User** means a person who remotely interacts with a modified Covered Work operated by You through a computer network.
 - **Necessary Patent Claims** means patent claims owned or controlled by a party that would be infringed by exercising permissions expressly granted for that party's contribution or covered material, excluding claims infringed only because of further modifications or combinations not supplied by that party.
 
 ## 3. Copyright license and permissions
@@ -68,7 +69,11 @@ No ownership of the original Project is transferred to You.
 
 4.10. **No evasion by hosting.** A Licensee may not avoid the obligations of this section merely by providing access to a modified Covered Work over a network instead of distributing copies of it.
 
-4.11. The final version should be reviewed against the network-interaction provision of GNU AGPLv3, particularly its definitions of modified versions, corresponding source, and user interaction, before adoption.
+4.11. The source offer must identify the exact version of the modified Covered Work being operated and provide a practical way to obtain the matching Corresponding Source. A generic link to an unrelated repository, an outdated branch, or source for a different release does not satisfy this requirement.
+
+4.12. If access to the network service requires an account, the source offer must be available to Network Users without requiring a paid subscription or purchase. This section does not require the operator to disclose credentials, private keys, personal data, or secrets; those items must be excluded from the Corresponding Source while preserving the materials reasonably necessary to build and operate the Covered Work.
+
+4.13. The final version should be reviewed against the network-interaction provision of GNU AGPLv3, particularly its definitions of modified versions, corresponding source, and user interaction, before adoption.
 
 ## 5. Attribution and preservation of notices
 
@@ -102,7 +107,7 @@ No ownership of the original Project is transferred to You.
 
 7.3. **No patent ambush by recipients.** If You distribute a Covered Work, You must not use a patent claim that You own or control to prevent recipients from exercising the permissions that You received under this license for that same Covered Work. This condition applies only to the extent permitted by applicable law and only to claims within Your authority to license.
 
-7.4. **Patent litigation.** If You initiate patent litigation against a party, alleging that the Project or a contribution incorporated into it constitutes direct or contributory patent infringement, the patent permissions granted to You under this license for the Project may terminate as of the filing of that litigation, to the extent permitted by applicable law. The final version must specify a fair reinstatement process and address defensive counterclaims.
+7.4. **Patent litigation and retaliation.** If You initiate patent litigation against any party, alleging that the Project or a contribution incorporated into it constitutes direct or contributory patent infringement, the patent licenses granted to You under Section 7.2 for the Covered Work terminate when the claim is filed, to the extent permitted by applicable law. This clause is intended to prevent a recipient from accepting patent permissions and then using patent litigation to restrict other recipients' exercise of those same permissions. The final version must define reinstatement and address defensive counterclaims, cross-claims, and proceedings that do not seek to restrict use of the Covered Work.
 
 7.5. **No claim of exclusive Project ownership through patents.** A patent does not, by itself, make its holder the copyright owner, original creator, or exclusive owner of the Tessellate Project. No Licensee may use this license as a basis to misrepresent those separate rights.
 
@@ -114,13 +119,15 @@ No ownership of the original Project is transferred to You.
 
 8.1. Unless a separate written agreement says otherwise, each Contributor retains ownership of their original contribution.
 
-8.2. By intentionally submitting a contribution for inclusion in the Project, the Contributor grants the Licensor and recipients of the Project a perpetual, worldwide, non-exclusive, royalty-free copyright license to use, reproduce, modify, prepare derivative works of, and distribute that contribution under TSL.
+8.2. A contribution is not accepted under this section merely because it was sent, posted publicly, or discussed. Before inclusion, the Contributor must be given clear notice of these contribution terms and must affirmatively agree to them through a documented contribution process or separate written agreement.
 
-8.3. The Contributor also grants the patent license described in Section 7.2 for Necessary Patent Claims the Contributor owns or controls.
+8.3. By affirmatively agreeing to contribute material under this section, the Contributor grants the Licensor and recipients of the Project a perpetual, worldwide, non-exclusive, royalty-free copyright license to use, reproduce, modify, prepare derivative works of, and distribute that contribution under TSL.
 
-8.4. A contribution must not knowingly include material that the Contributor lacks permission to submit under these terms.
+8.4. The Contributor also grants the patent license described in Section 7.2 for Necessary Patent Claims the Contributor owns or controls.
 
-8.5. Submission does not transfer ownership of the original Project to the Contributor.
+8.5. A contribution must not knowingly include material that the Contributor lacks permission to submit under these terms.
+
+8.6. A contribution does not transfer ownership of the original Project to the Contributor.
 
 ## 9. Third-party materials and dependencies
 
@@ -134,7 +141,7 @@ No ownership of the original Project is transferred to You.
 
 ## 10. Forks, plugins, mods, and independent works
 
-10.1. A fork containing or derived from a substantial portion of the Project is a Covered Work and is subject to the copyleft requirements when distributed.
+10.1. A fork containing or derived from a substantial portion of the Project is intended to be a Covered Work and is subject to the copyleft requirements when distributed. The final license should define this scope with sufficient precision and must not imply that mere ideas, compatibility, or independent reimplementations are covered.
 
 10.2. A separate plugin, mod, tool, or application that merely communicates with the Project through a documented interface is not automatically a Covered Work solely because it interoperates with the Project. Whether a particular combination is a derivative or combined work depends on its technical and legal facts.
 
@@ -184,7 +191,7 @@ TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, NO COPYRIGHT HOLDER OR CONTRI
 
 ## 16. License version
 
-This document is a working draft of TSL-1.0, Version 2.1. It is not a published license version and grants no permissions by itself.
+This document is a working draft of TSL-1.0, Version 2.3. It is not a published license version and grants no permissions by itself.
 
 A final TSL-1.0 must include a stable version identifier, publication date, authoritative text, and an explicit statement identifying the materials to which it applies.
 
@@ -192,7 +199,7 @@ A final TSL-1.0 must include a stable version identifier, publication date, auth
 
 **Original project:** Tessellate  
 **Proposed creator / licensor:** Nitrous  
-**Document:** TSL-1.0 Working Draft, Version 2.1  
+**Document:** TSL-1.0 Working Draft, Version 2.3  
 **Status:** Not legally reviewed; not an operative license
 
 Copyright © 2026 Nitrous, to the extent applicable to material in which Nitrous holds copyright.
