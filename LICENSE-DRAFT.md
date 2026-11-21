@@ -8,6 +8,8 @@
 
 > This document is a work in progress for discussion and legal review. It does not yet grant permission to use, modify, or distribute Tessellate. Until a final license is published and attached to a release, no open-source license should be inferred from this draft.
 
+> **Current project license:** Tessellate is currently licensed under the GNU Affero General Public License v3.0 only (**AGPL-3.0-only**), as stated in the repository's root `LICENSE` file. This TSL document is an unadopted proposal for possible future consideration. It does not replace, amend, or restrict the AGPL rights already granted for existing Tessellate releases. Any future relicensing would apply only where the relevant rights holders have authority to grant it.
+
 ---
 
 ## 1. Purpose and interpretation
