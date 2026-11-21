@@ -15,6 +15,9 @@ import kotlin.math.floor
  * Hitbox: 0.25 x 0.25 x 0.25 world units.
  * [position] represents the bottom-center point of the entity (consistent with Player),
  * so [boundingBox] spans [x - 0.125 .. x + 0.125], [y .. y + 0.25], [z - 0.125 .. z + 0.125].
+ *
+ * Cached [boundingBox] is refreshed strictly **once per tick** after all physics substeps settle,
+ * incurring zero allocations during [tick].
  */
 open class ItemDropEntity(
     position: Vec3,
@@ -28,7 +31,7 @@ open class ItemDropEntity(
         get() = TYPE_ID
 
     init {
-        updateBoundingBox()
+        refreshBoundingBox()
     }
 
     override fun writeExtraData(): Map<String, Any?> {
@@ -37,8 +40,8 @@ open class ItemDropEntity(
 
     /**
      * Advances physics and resolves vertical collisions with solid world blocks.
-     * Uses bounded substeps and swept vertical bounds to prevent tunneling through
-     * 1-block-thick floors during large [deltaTime] (seconds) timesteps.
+     * Uses bounded substeps and swept vertical bounds without thrashing [boundingBox]
+     * per substep; updates cached AABB once at the end of the tick.
      */
     override fun tick(world: World, deltaTime: Float) {
         if (isRemoved || deltaTime <= 0f) return
@@ -54,36 +57,54 @@ open class ItemDropEntity(
         val steps = maxOf(1, displacementSteps, timeSteps).coerceAtMost(MAX_SUBSTEPS)
         val stepDt = deltaTime / steps
 
+        val eps = 1e-4f
+        val minBx = floor(position.x - HALF_WIDTH + eps).toInt()
+        val maxBx = floor(position.x + HALF_WIDTH - eps).toInt()
+        val minBz = floor(position.z - HALF_DEPTH + eps).toInt()
+        val maxBz = floor(position.z + HALF_DEPTH - eps).toInt()
+
         for (step in 0 until steps) {
             if (isRemoved) break
 
-            val prevMinY = boundingBox.minY
-            val prevMaxY = boundingBox.maxY
+            val prevMinY = position.y
+            val prevMaxY = position.y + HEIGHT
 
-            super.tick(world, stepDt)
+            velocity.y -= GRAVITY * stepDt
             if (velocity.y < TERMINAL_VELOCITY_Y) {
                 velocity.y = TERMINAL_VELOCITY_Y
             }
+            position.x += velocity.x * stepDt
+            position.y += velocity.y * stepDt
+            position.z += velocity.z * stepDt
 
-            resolveVerticalCollisions(world, prevMinY, prevMaxY)
+            resolveVerticalCollisions(world, prevMinY, prevMaxY, minBx, maxBx, minBz, maxBz)
         }
+
+        tickCount++
+        refreshBoundingBox()
     }
 
-    private fun resolveVerticalCollisions(world: World, prevMinY: Float, prevMaxY: Float) {
+    private fun resolveVerticalCollisions(
+        world: World,
+        prevMinY: Float,
+        prevMaxY: Float,
+        minBx: Int,
+        maxBx: Int,
+        minBz: Int,
+        maxBz: Int
+    ) {
         val eps = 1e-4f
-        val minBx = floor(boundingBox.minX + eps).toInt()
-        val maxBx = floor(boundingBox.maxX - eps).toInt()
-        val minBz = floor(boundingBox.minZ + eps).toInt()
-        val maxBz = floor(boundingBox.maxZ - eps).toInt()
+        val curMinY = position.y
+        val curMaxY = position.y + HEIGHT
 
-        val sweptMinY = minOf(prevMinY, boundingBox.minY)
-        val sweptMaxY = maxOf(prevMaxY, boundingBox.maxY)
+        val sweptMinY = minOf(prevMinY, curMinY)
+        val sweptMaxY = maxOf(prevMaxY, curMaxY)
         val minBy = floor(sweptMinY).toInt().coerceIn(0, world.sizeY - 1)
         val maxBy = floor(sweptMaxY - eps).toInt().coerceIn(0, world.sizeY - 1)
         if (maxBy < minBy) return
 
         if (velocity.y <= 0f) {
-            var hitFloorY: Float? = null
+            var hitFloorY = Float.NEGATIVE_INFINITY
 
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
@@ -92,11 +113,11 @@ open class ItemDropEntity(
                         if (!isBlockSolid(block)) continue
 
                         val blockTopY = by + 1.0f
-                        val crossedFromAbove = prevMinY >= blockTopY - eps && boundingBox.minY <= blockTopY
-                        val overlapsBlock = boundingBox.minY < blockTopY && boundingBox.maxY > by.toFloat()
+                        val crossedFromAbove = prevMinY >= blockTopY - eps && curMinY <= blockTopY
+                        val overlapsBlock = curMinY < blockTopY && curMaxY > by.toFloat()
 
                         if (crossedFromAbove || overlapsBlock) {
-                            if (hitFloorY == null || blockTopY > hitFloorY) {
+                            if (blockTopY > hitFloorY) {
                                 hitFloorY = blockTopY
                             }
                         }
@@ -104,13 +125,12 @@ open class ItemDropEntity(
                 }
             }
 
-            if (hitFloorY != null) {
+            if (hitFloorY.isFinite()) {
                 position.y = hitFloorY
                 velocity.y = 0f
-                updateBoundingBox()
             }
         } else {
-            var hitCeilingY: Float? = null
+            var hitCeilingY = Float.POSITIVE_INFINITY
 
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
@@ -119,11 +139,11 @@ open class ItemDropEntity(
                         if (!isBlockSolid(block)) continue
 
                         val blockBottomY = by.toFloat()
-                        val crossedFromBelow = prevMaxY <= blockBottomY + eps && boundingBox.maxY >= blockBottomY
-                        val overlapsBlock = boundingBox.minY < (by + 1.0f) && boundingBox.maxY > blockBottomY
+                        val crossedFromBelow = prevMaxY <= blockBottomY + eps && curMaxY >= blockBottomY
+                        val overlapsBlock = curMinY < (by + 1.0f) && curMaxY > blockBottomY
 
                         if (crossedFromBelow || overlapsBlock) {
-                            if (hitCeilingY == null || blockBottomY < hitCeilingY) {
+                            if (blockBottomY < hitCeilingY) {
                                 hitCeilingY = blockBottomY
                             }
                         }
@@ -131,10 +151,9 @@ open class ItemDropEntity(
                 }
             }
 
-            if (hitCeilingY != null) {
+            if (hitCeilingY.isFinite()) {
                 position.y = hitCeilingY - HEIGHT
                 velocity.y = 0f
-                updateBoundingBox()
             }
         }
     }

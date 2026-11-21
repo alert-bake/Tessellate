@@ -323,7 +323,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
 
     fun getAtlasUv(textureId: String): TextureUvRect {
         val snapshot = atlasUvMap
-        return snapshot[textureId] ?: snapshot[TextureConstants.PROTO_DEBUG_BUG] ?: TextureUvRect(0f, 0f, 1f, 1f)
+        return snapshot[textureId] ?: snapshot[TextureConstants.PROTO_DEBUG_BUG] ?: DEFAULT_FALLBACK_UV
     }
 
     override fun getTextureHandle(id: String): Int {
@@ -541,6 +541,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
         const val ATLAS_MAX_MIP_LEVEL = 3
         const val ATLAS_MIN_FILTER = GLES30.GL_LINEAR_MIPMAP_LINEAR
         const val ATLAS_WRAP_MODE = GLES30.GL_CLAMP_TO_EDGE
+
+        val DEFAULT_FALLBACK_UV = TextureUvRect(0f, 0f, 1f, 1f)
 
         val ATLAS_TILE_GRID: List<Pair<String, Pair<Int, Int>>> = listOf(
             TextureConstants.PROTO_GRASS to Pair(0, 0),

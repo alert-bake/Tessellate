@@ -85,6 +85,14 @@ class TouchInputController {
     val isJumpHeld: Boolean
         get() = activeJumpPointers.isNotEmpty()
 
+    fun setJumpPointerActive(pointerId: Int, active: Boolean) {
+        if (active) {
+            activeJumpPointers.add(pointerId)
+        } else {
+            activeJumpPointers.remove(pointerId)
+        }
+    }
+
     private var lastSurfaceWidth: Int = 1920
     private var lastSurfaceHeight: Int = 1080
 
@@ -117,7 +125,7 @@ class TouchInputController {
     fun recomputeControlBounds() {
         val width = lastSurfaceWidth
         val height = lastSurfaceHeight
-        val scaleFactor = uiScale.coerceIn(0.6f, 1.5f)
+        val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
         // Landscape layout: D-pad pinned to bottom-left corner with comfortable margins
         val dpadSize = ((height * 0.48f).coerceIn(180f, 270f)) * scaleFactor
         val left = 36f

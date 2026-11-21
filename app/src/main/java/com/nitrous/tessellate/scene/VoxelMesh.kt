@@ -184,12 +184,15 @@ class VoxelMesh {
     fun drawUniformBlock(
         pipeline: ITexturePipeline,
         shader: Shader,
-        textureId: String
+        textureId: String,
+        bindTexture: Boolean = true
     ) {
-        val handle = pipeline.getTextureHandle(textureId)
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
-        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, handle)
-        shader.setUniform1i("uTexture", 0)
+        if (bindTexture) {
+            val handle = pipeline.getTextureHandle(textureId)
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, handle)
+            shader.setUniform1i("uTexture", 0)
+        }
 
         GLES30.glBindVertexArray(vaoId)
         GLES30.glDrawElements(GLES30.GL_TRIANGLES, 36, GLES30.GL_UNSIGNED_SHORT, 0)

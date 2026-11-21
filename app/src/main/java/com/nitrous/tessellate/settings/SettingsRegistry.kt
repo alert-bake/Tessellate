@@ -208,6 +208,9 @@ class SettingsRegistry(
         return try {
             when (ref) {
                 is RegisteredReference.PropertyReference -> {
+                    if (persist && !def.isModSetting && valuesEqual(ref.getter(), sanitizedValue)) {
+                        return SettingValidationResult(true)
+                    }
                     ref.setter(sanitizedValue)
                 }
                 is RegisteredReference.CommandReference -> {
@@ -285,10 +288,20 @@ class SettingsRegistry(
         for (def in defs) {
             if (!def.persist || def.controlType == SettingControlType.BUTTON) continue
             if (def.isModSetting && !includeModSettings) continue
+            if (!def.isModSetting && onResetDefaults != null) continue
             val defaultVal = def.defaultValue ?: continue
             setValue(def.id, defaultVal, persist = false)
         }
         notifyListeners()
+    }
+
+    private fun valuesEqual(a: Any?, b: Any?): Boolean {
+        if (a === b) return true
+        if (a == null || b == null) return false
+        if (a is Number && b is Number) {
+            return kotlin.math.abs(a.toDouble() - b.toDouble()) < 1e-5
+        }
+        return a == b
     }
 
     fun formatValueDisplay(settingId: String): String {

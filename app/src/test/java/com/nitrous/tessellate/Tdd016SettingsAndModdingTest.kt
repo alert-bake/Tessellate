@@ -8,6 +8,8 @@ import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.nitrous.tessellate.core.AppState
 import com.nitrous.tessellate.core.TessellateEngine
+import com.nitrous.tessellate.graphics.Matrix4
+import com.nitrous.tessellate.graphics.Shader
 import com.nitrous.tessellate.item.ItemStack
 import com.nitrous.tessellate.modding.ModApprovalStatus
 import com.nitrous.tessellate.modding.ModCodeInspector
@@ -23,6 +25,7 @@ import com.nitrous.tessellate.settings.SettingDefinition
 import com.nitrous.tessellate.settings.SettingScreenTarget
 import com.nitrous.tessellate.settings.SettingsManager
 import com.nitrous.tessellate.settings.VanillaSettingsRegistrar
+import com.nitrous.tessellate.ui.BitmapFontRenderer
 import com.nitrous.tessellate.world.BlockPos
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.GameMode
@@ -43,6 +46,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLooper
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 /**
@@ -162,6 +169,12 @@ class Tdd016SettingsAndModdingTest {
             engine.startWorldSession(WorldSession("DistWorld", GameMode.CREATIVE, WorldType.FLAT, 42L))
             val world = engine.worldScene.world
             assertEquals(4, world.renderDistance)
+            world.streamChunksAround(
+                engine.worldScene.player.posX,
+                engine.worldScene.player.posZ,
+                engine.texturePipeline,
+                forceCheck = true
+            )?.let { awaitJob(it, timeoutMs = 15_000L) }
             // Ensure outer chunk column (4, 1) at distance 3 is loaded before reducing render distance to 2
             world.ensureChunkColumnLoadedSync(4, 1)
             assertTrue(world.hasChunk(4, 0, 1))
@@ -763,6 +776,258 @@ class Tdd016SettingsAndModdingTest {
             assertTrue("settings.json MUST be preserved by Clear Cache", engine.settingsManager.settingsFile.exists())
             assertTrue("Lua mods MUST be preserved by Clear Cache", modFile.exists())
             assertEquals(90f, engine.currentSettings.fov, 1e-4f)
+        } finally {
+            engine.worldScene.destroySession()
+        }
+    }
+
+    @Test
+    fun `debug NanoTime Profiler toggles live profiling, persists across restarts, and resets cleanly`() {
+        val engine = TessellateEngine(context)
+        awaitJob(engine.initialSettingsLoadJob)
+        engine.onSurfaceChanged(1920, 1080)
+        try {
+            assertFalse("NanoTime Profiler must default to OFF", engine.currentSettings.enableNanoTimeProfiler)
+            assertFalse(engine.worldScene.profiler.enabled)
+
+            engine.settingsRegistry.setValue("tessellate:enable_debug_options", true)
+            engine.setAppState(AppState.DEBUG_OPTIONS)
+            val screen = engine.uiRenderer.settingsScreen
+            screen.selectCategory(VanillaSettingsRegistrar.CAT_DEBUG_RENDERING)
+
+            val nanoRow = screen.getVisibleRows().firstOrNull { it.definition.id == "tessellate:debug_nanotime" }
+            assertNotNull("NanoTime Profiler toggle must appear in Debug Options -> Debug Rendering", nanoRow)
+            assertEquals("OFF", nanoRow!!.actionButton!!.label)
+
+            tapButton(engine, nanoRow.actionButton!!.rect.centerX(), nanoRow.actionButton!!.rect.centerY(), SystemClock.uptimeMillis())
+            awaitLastSave(engine)
+
+            assertTrue(engine.currentSettings.enableNanoTimeProfiler)
+            assertTrue(engine.worldScene.profiler.enabled)
+            assertEquals("ON", screen.getVisibleRows().first { it.definition.id == "tessellate:debug_nanotime" }.actionButton!!.label)
+
+            engine.worldScene.profiler.recordUpdateStage(1.50f, 0.50f, 0.25f, 2, 1)
+            engine.worldScene.profiler.recordRenderStage(0.75f, 1.25f, 12, 4)
+            val hudLine = engine.worldScene.profiler.formatCompactHudSummary()
+            assertTrue(hudLine.startsWith("nanoTime:"))
+            assertTrue(hudLine.contains("(2/1)"))
+        } finally {
+            engine.worldScene.destroySession()
+        }
+
+        val restarted = TessellateEngine(context)
+        awaitJob(restarted.initialSettingsLoadJob)
+        try {
+            assertTrue("NanoTime Profiler must persist across restart", restarted.currentSettings.enableNanoTimeProfiler)
+            assertTrue(restarted.worldScene.profiler.enabled)
+
+            restarted.settingsRegistry.resetToDefaults()
+            awaitLastSave(restarted)
+            assertFalse(restarted.currentSettings.enableNanoTimeProfiler)
+            assertFalse(restarted.worldScene.profiler.enabled)
+        } finally {
+            restarted.worldScene.destroySession()
+        }
+    }
+
+    @Test
+    fun `chunk radius adjusts camera farPlane safely, cancels stale streaming on shrink, and skips duplicate slider writes`() {
+        val engine = TessellateEngine(context)
+        awaitJob(engine.initialSettingsLoadJob)
+        engine.onSurfaceChanged(1920, 1080)
+        try {
+            engine.startWorldSession(WorldSession("FarWorld", GameMode.CREATIVE, WorldType.FLAT, 99L))
+            engine.worldScene.world.streamChunksAround(
+                engine.worldScene.player.posX,
+                engine.worldScene.player.posZ,
+                engine.texturePipeline,
+                forceCheck = true
+            )?.let { awaitJob(it, timeoutMs = 15_000L) }
+
+            assertTrue(engine.settingsRegistry.setValue("tessellate:render_distance", 16).isValid)
+            assertEquals(16, engine.worldScene.world.renderDistance)
+            assertTrue(
+                "Max render distance 16 (256 blocks) must extend camera farPlane beyond 250f",
+                engine.camera.farPlane >= 400f
+            )
+
+            // Shrinking back down when inner chunks are already present must return null (canceling older job)
+            assertTrue(engine.settingsRegistry.setValue("tessellate:render_distance", 2).isValid)
+            assertEquals(2, engine.worldScene.world.renderDistance)
+            val jobAfterShrink = engine.worldScene.world.streamChunksAround(
+                engine.worldScene.player.posX,
+                engine.worldScene.player.posZ,
+                engine.texturePipeline,
+                forceCheck = true
+            )
+            assertNull("No missing columns after shrinking inside loaded area", jobAfterShrink)
+
+            // No-op write at quantized boundary keeps lastSaveJob unchanged
+            awaitLastSave(engine)
+            val jobBeforeNoOp = engine.settingsManager.lastSaveJob
+            engine.updateAndPersistSettings { it.copy(renderDistance = 2) }
+            assertEquals("Duplicate quantized setting update must not trigger extra file write", jobBeforeNoOp, engine.settingsManager.lastSaveJob)
+        } finally {
+            engine.worldScene.destroySession()
+        }
+    }
+
+    @Test
+    fun `resizing controls scales D-pad, Jump, hotbar cleanly without overlap and syncs live Jump input`() {
+        val engine = TessellateEngine(context)
+        awaitJob(engine.initialSettingsLoadJob)
+        engine.onSurfaceChanged(960, 540)
+        try {
+            engine.startWorldSession(WorldSession("ControlsWorld", GameMode.CREATIVE, WorldType.FLAT, 15L))
+
+            assertTrue(engine.settingsRegistry.setValue("tessellate:ui_scale", 0.75).isValid)
+            val dpadSmall = engine.touchController.dpadRect.width()
+            val jumpSmall = engine.uiRenderer.jumpButtonRect.width()
+            val hotbarSmall = engine.uiRenderer.hotbarBoundsRect.width()
+
+            assertTrue(engine.settingsRegistry.setValue("tessellate:ui_scale", 1.25).isValid)
+            val dpadLarge = engine.touchController.dpadRect.width()
+            val jumpLarge = engine.uiRenderer.jumpButtonRect.width()
+            val hotbarLarge = engine.uiRenderer.hotbarBoundsRect.width()
+
+            assertTrue("D-pad width must grow with uiScale", dpadLarge > dpadSmall)
+            assertTrue("Jump button width must grow with uiScale", jumpLarge > jumpSmall)
+            assertTrue("Hotbar width must scale up on larger uiScale", hotbarLarge > hotbarSmall)
+            assertTrue(
+                "Hotbar must never overlap D-pad even on compact 960x540 screen at 1.25x scale",
+                engine.uiRenderer.hotbarBoundsRect.left >= engine.touchController.dpadRect.right + 12f
+            )
+            assertTrue(
+                "Hotbar must never overlap Jump button even on compact 960x540 screen at 1.25x scale",
+                engine.uiRenderer.hotbarBoundsRect.right <= engine.uiRenderer.jumpButtonRect.left - 12f
+            )
+
+            // Holding Jump button in PLAYING state must drive touchController.isJumpHeld
+            val jx = engine.uiRenderer.jumpButtonRect.centerX()
+            val jy = engine.uiRenderer.jumpButtonRect.centerY()
+            val t0 = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(t0, t0, MotionEvent.ACTION_DOWN, jx, jy, 0)
+            assertTrue(engine.onTouchEvent(down))
+            down.recycle()
+            assertTrue("Holding scaled Jump button must activate touchController.isJumpHeld", engine.touchController.isJumpHeld)
+
+            val up = MotionEvent.obtain(t0, t0 + 40, MotionEvent.ACTION_UP, jx, jy, 0)
+            assertTrue(engine.onTouchEvent(up))
+            up.recycle()
+            assertFalse("Releasing Jump button must clear touchController.isJumpHeld", engine.touchController.isJumpHeld)
+        } finally {
+            engine.worldScene.destroySession()
+        }
+    }
+
+    @Test
+    fun `concurrent settings edits and GL render loop inside an active world never throw ConcurrentModificationException or NPE`() {
+        val engine = TessellateEngine(context)
+        awaitJob(engine.initialSettingsLoadJob)
+        engine.onSurfaceChanged(1920, 1080)
+        try {
+            engine.startWorldSession(WorldSession("RaceWorld", GameMode.CREATIVE, WorldType.FLAT, 42L))
+            engine.setPaused(true)
+            engine.openSettingsFrom(AppState.PLAYING)
+
+            val screen = engine.uiRenderer.settingsScreen
+            val fontRenderer = BitmapFontRenderer(context)
+            val dummyShader = Shader("", "")
+            val ortho = Matrix4.create()
+            Matrix4.ortho(ortho, 0f, 1920f, 1080f, 0f, -1f, 1f)
+
+            val stop = AtomicBoolean(false)
+            val errorRef = AtomicReference<Throwable?>(null)
+            val startedLatch = CountDownLatch(1)
+
+            val glRenderThread = Thread({
+                startedLatch.countDown()
+                try {
+                    while (!stop.get()) {
+                        screen.render(
+                            shader = dummyShader,
+                            orthoMatrix = ortho,
+                            quadVaoId = 0,
+                            fontRenderer = fontRenderer,
+                            drawButtonFn = { btn, _ -> btn.rect.width() },
+                            drawSliderTrackFn = { rect, frac -> rect.width() * frac }
+                        )
+                        for (row in screen.getVisibleRows()) {
+                            row.rowRect.centerX()
+                        }
+                        for (tab in screen.getCategoryTabs()) {
+                            tab.id
+                        }
+                        engine.worldScene.worldRenderer.markAllChunksDirty()
+                    }
+                } catch (t: Throwable) {
+                    errorRef.compareAndSet(null, t)
+                }
+            }, "TestGLThread")
+
+            glRenderThread.start()
+            assertTrue(startedLatch.await(2, TimeUnit.SECONDS))
+
+            val categories = listOf(
+                VanillaSettingsRegistrar.CAT_VIDEO,
+                VanillaSettingsRegistrar.CAT_CONTROLS,
+                VanillaSettingsRegistrar.CAT_GENERAL
+            )
+            for (i in 0 until 250) {
+                if (errorRef.get() != null) break
+                screen.selectCategory(categories[i % categories.size])
+                engine.settingsRegistry.setValue("tessellate:fov", 35.0 + (i % 15) * 5.0, persist = true)
+                engine.settingsRegistry.setValue("tessellate:ui_scale", if (i % 2 == 0) 0.8 else 1.2, persist = true)
+                engine.settingsRegistry.toggleValue("tessellate:view_bobbing")
+                engine.settingsRegistry.toggleValue("tessellate:enable_debug_options")
+                engine.settingsRegistry.setValue("tessellate:render_distance", 2 + (i % 5), persist = true)
+                screen.triggerButtonSetting(
+                    engine.settingsRegistry.getSetting("tessellate:clear_cache")!!
+                )
+                if (i % 50 == 49) {
+                    engine.resetAllSettingsToDefaults()
+                }
+            }
+
+            stop.set(true)
+            glRenderThread.join(5000L)
+            assertFalse("GL render thread should exit cleanly", glRenderThread.isAlive)
+            val failure = errorRef.get()
+            if (failure != null) {
+                throw AssertionError("Concurrent settings editing threw ${failure::class.java.simpleName}: ${failure.message}", failure)
+            }
+            awaitLastSave(engine)
+        } finally {
+            engine.worldScene.destroySession()
+        }
+    }
+
+    @Test
+    fun `raising render distance to max while paused in settings caps prebuiltMeshes to prevent OOM`() {
+        val engine = TessellateEngine(context)
+        awaitJob(engine.initialSettingsLoadJob)
+        engine.onSurfaceChanged(1920, 1080)
+        try {
+            engine.startWorldSession(WorldSession("LargeRadiusWorld", GameMode.SURVIVAL, WorldType.DEFAULT, 777L))
+            engine.setPaused(true)
+            engine.openSettingsFrom(AppState.PLAYING)
+
+            assertTrue(engine.settingsRegistry.setValue("tessellate:render_distance", 16).isValid)
+            val job = engine.worldScene.world.streamChunksAround(
+                engine.worldScene.player.posX,
+                engine.worldScene.player.posZ,
+                engine.texturePipeline,
+                forceCheck = true
+            )
+            if (job != null) {
+                awaitJob(job, timeoutMs = 20_000L)
+            }
+
+            assertTrue("World chunks must still stream for renderDistance = 16", engine.worldScene.world.getAllChunks().isNotEmpty())
+            assertTrue(
+                "prebuiltMeshes must stay capped at <= ${World.MAX_PREBUILT_MESHES} while paused in Settings (was ${engine.worldScene.world.getPrebuiltMeshCount()})",
+                engine.worldScene.world.getPrebuiltMeshCount() <= World.MAX_PREBUILT_MESHES
+            )
         } finally {
             engine.worldScene.destroySession()
         }

@@ -89,8 +89,8 @@ class TexturedUiRenderer(
     private var hudCanvas: Canvas? = null
     private var hudTextureHandle: Int = 0
     private var hudTextureAllocated: Boolean = false
-    private val hudWidth: Int = 540
-    private val hudHeight: Int = 170
+    private val hudWidth: Int = 600
+    private val hudHeight: Int = 200
     private var lastHudUpdateMs: Long = 0
     private val hudUpdateIntervalMs: Long = 100
 
@@ -171,8 +171,8 @@ class TexturedUiRenderer(
     val jumpButtonRect = RectF()
 
     // Track active pointer IDs pressing the jump button or hotbar so camera drag is never triggered
-    private val activeJumpPointers = mutableSetOf<Int>()
-    private val activeHotbarPointers = mutableSetOf<Int>()
+    private val activeJumpPointers: MutableSet<Int> = java.util.Collections.synchronizedSet(mutableSetOf())
+    private val activeHotbarPointers: MutableSet<Int> = java.util.Collections.synchronizedSet(mutableSetOf())
 
     // Paints for diagnostic HUD
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -413,10 +413,11 @@ class TexturedUiRenderer(
         hotbarBoundsRect.set(active.bounds)
         hotbarSlotRects = active.slots
 
-        // Minimal top-right buttons in PLAYING mode (Menu & Regen only; no Orbit/Reset/Debug box)
-        val btnHeight = 52f
-        val btnWidth = 112f
-        val gap = 12f
+        // Minimal top-right buttons in PLAYING mode scaled cleanly with UI Scale (>= 48px touch floor)
+        val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
+        val btnHeight = (52f * scaleFactor).coerceAtLeast(48f)
+        val btnWidth = (112f * scaleFactor).coerceAtLeast(88f)
+        val gap = 12f * scaleFactor
         val topMargin = 16f
         val rightMargin = 20f
 
@@ -431,7 +432,6 @@ class TexturedUiRenderer(
         }
 
         // Jump Button: positioned at bottom-right corner, scaled to match on-screen size of D-pad elements
-        val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
         val dpadSize = ((screenHeight * 0.48f).coerceIn(180f, 270f)) * scaleFactor
         val jumpSize = dpadSize * 0.56f
         val jumpMargin = 36f
@@ -481,15 +481,16 @@ class TexturedUiRenderer(
         val jumpMargin = 36f
         val reservedLeft = 36f + dpadSize + 20f
         val reservedRight = jumpMargin + jumpSize + 20f
-        val availableCenterWidth = (screenWidth - reservedLeft - reservedRight).coerceAtLeast(182f * 2.0f)
+        val availableCenterWidth = (screenWidth - reservedLeft - reservedRight).coerceAtLeast(182f * 1.2f)
         val hotbarScale = minOf(
-            ((screenHeight / 250f) * scaleFactor).coerceIn(2.0f, 4.5f),
+            ((screenHeight / 250f) * scaleFactor).coerceIn(1.2f, 4.5f),
             availableCenterWidth / 182f
         )
 
         val hotbarW = 182f * hotbarScale
         val hotbarH = 22f * hotbarScale
-        val hotbarLeft = (screenWidth - hotbarW) / 2f
+        val maxHotbarLeft = (screenWidth - reservedRight - hotbarW).coerceAtLeast(reservedLeft)
+        val hotbarLeft = ((screenWidth - hotbarW) / 2f).coerceIn(reservedLeft, maxHotbarLeft)
         val hotbarTop = screenHeight - hotbarH - 20f
         val bounds = RectF(hotbarLeft, hotbarTop, hotbarLeft + hotbarW, hotbarTop + hotbarH)
 
@@ -773,24 +774,44 @@ class TexturedUiRenderer(
         // 4. Minimal Top-Right Utility Buttons (Menu & Regen)
         drawInGameButtons(shader, pipeline, sceneMode)
 
-        // 5. Diagnostic HUD / Coordinates overlay (Top Left)
+        // 5. Diagnostic HUD / Coordinates / NanoTime overlay (Top Left)
         if (showDebugHud) {
             drawDiagnosticHud(shader)
-        } else if (showCoordinates && sceneMode == SceneMode.WORLD) {
-            val p = engine.worldScene.player
-            val coordText = "XYZ: %.1f, %.1f, %.1f".format(p.posX, p.posY, p.posZ)
-            drawQuad(shader, 16f, 16f, 290f, 36f, 0.05f, 0.07f, 0.10f, 0.72f)
-            bitmapFontRenderer.drawText(
-                shader = shader,
-                orthoMatrix = orthoMatrix,
-                quadVaoId = quadVaoId,
-                text = coordText,
-                x = 24f,
-                y = 26f,
-                scale = 2,
-                r = 0.95f, g = 0.98f, b = 0.96f, a = 1f,
-                shadow = true
-            )
+        } else {
+            var nextOverlayY = 16f
+            if (showCoordinates && sceneMode == SceneMode.WORLD) {
+                val p = engine.worldScene.player
+                val coordText = "XYZ: %.1f, %.1f, %.1f".format(p.posX, p.posY, p.posZ)
+                drawQuad(shader, 16f, nextOverlayY, 290f, 36f, 0.05f, 0.07f, 0.10f, 0.72f)
+                bitmapFontRenderer.drawText(
+                    shader = shader,
+                    orthoMatrix = orthoMatrix,
+                    quadVaoId = quadVaoId,
+                    text = coordText,
+                    x = 24f,
+                    y = nextOverlayY + 10f,
+                    scale = 2,
+                    r = 0.95f, g = 0.98f, b = 0.96f, a = 1f,
+                    shadow = true
+                )
+                nextOverlayY += 42f
+            }
+            if (engine.worldScene.profiler.enabled && sceneMode == SceneMode.WORLD) {
+                val nanoText = engine.worldScene.profiler.formatCompactHudSummary()
+                val boxW = (bitmapFontRenderer.measureWidth(nanoText, 2) + 18f).coerceAtLeast(300f)
+                drawQuad(shader, 16f, nextOverlayY, boxW, 34f, 0.05f, 0.08f, 0.12f, 0.78f)
+                bitmapFontRenderer.drawText(
+                    shader = shader,
+                    orthoMatrix = orthoMatrix,
+                    quadVaoId = quadVaoId,
+                    text = nanoText,
+                    x = 24f,
+                    y = nextOverlayY + 9f,
+                    scale = 2,
+                    r = 0.48f, g = 0.92f, b = 1.0f, a = 1f,
+                    shadow = true
+                )
+            }
         }
     }
 
@@ -1243,13 +1264,14 @@ class TexturedUiRenderer(
         }
 
         if (hudTextureHandle != 0) {
+            val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
             drawTexturedQuad(
                 shader = shader,
                 textureHandle = hudTextureHandle,
                 x = 16f,
                 y = 16f,
-                width = hudWidth.toFloat(),
-                height = hudHeight.toFloat(),
+                width = hudWidth.toFloat() * scaleFactor,
+                height = hudHeight.toFloat() * scaleFactor,
                 r = 1f, g = 1f, b = 1f, a = 1f,
                 whiteOverlay = false
             )
@@ -1315,6 +1337,12 @@ class TexturedUiRenderer(
             }
             val miningStr = if (engine.worldScene.isMining) " [MINING ${(engine.worldScene.miningProgress * 100).toInt()}%]" else ""
             canvas.drawText("Hand: $selItemName$miningStr", 16f, y, textPaint)
+            y += lineSpacing
+
+            if (engine.worldScene.profiler.enabled) {
+                textPaint.color = Color.rgb(120, 225, 255)
+                canvas.drawText(engine.worldScene.profiler.formatCompactHudSummary(), 16f, y, textPaint)
+            }
         } else {
             canvas.drawText("TESSELLATE // SHOWCASE", 16f, y, titlePaint)
             y += lineSpacing
@@ -1467,6 +1495,9 @@ class TexturedUiRenderer(
                     return true
                 }
                 val consumedJump = activeJumpPointers.remove(pointerId)
+                if (consumedJump) {
+                    engine.touchController.setJumpPointerActive(pointerId, false)
+                }
                 val consumedHotbar = activeHotbarPointers.remove(pointerId)
                 return consumedJump || consumedHotbar
             }
@@ -1475,6 +1506,9 @@ class TexturedUiRenderer(
                     activeHotbarPointers.isNotEmpty() ||
                     activeMenuHudPointerId != null ||
                     activeRegenHudPointerId != null
+                for (pid in activeJumpPointers) {
+                    engine.touchController.setJumpPointerActive(pid, false)
+                }
                 clearInGamePointers()
                 return hadActive
             }
@@ -1491,6 +1525,7 @@ class TexturedUiRenderer(
         // 0. Check jump button hitbox BEFORE camera drag or gameplay interaction
         if (isWorld && !jumpButtonRect.isEmpty && jumpButtonRect.contains(x, y)) {
             activeJumpPointers.add(pointerId)
+            engine.touchController.setJumpPointerActive(pointerId, true)
             engine.worldScene.player.jump()
             return true
         }

@@ -94,6 +94,7 @@ class TessellateEngine(
         private set
 
     private val modeLock = Any()
+    private val settingsLock = Any()
 
     var onAppStateChanged: ((AppState) -> Unit)? = null
     var onPauseStateChanged: ((Boolean) -> Unit)? = null
@@ -118,19 +119,23 @@ class TessellateEngine(
 
         settingsRegistry.onPersistSetting = { def, sanitizedValue ->
             if (def.isModSetting) {
-                val updatedMap = currentSettings.modValues.toMutableMap()
-                if (sanitizedValue != null) {
-                    updatedMap[def.id] = sanitizedValue.toString()
+                synchronized(settingsLock) {
+                    val updatedMap = currentSettings.modValues.toMutableMap()
+                    if (sanitizedValue != null) {
+                        updatedMap[def.id] = sanitizedValue.toString()
+                    }
+                    val updated = currentSettings.copy(modValues = updatedMap)
+                    currentSettings = updated
+                    settingsManager.saveSettings(updated)
                 }
-                val updated = currentSettings.copy(modValues = updatedMap)
-                currentSettings = updated
-                settingsManager.saveSettings(updated)
             }
         }
         settingsRegistry.onResetDefaults = {
-            val defaults = GameSettings(modValues = currentSettings.modValues)
-            applySettings(defaults)
-            settingsManager.saveSettings(defaults)
+            synchronized(settingsLock) {
+                val defaults = GameSettings(modValues = currentSettings.modValues)
+                applySettings(defaults)
+                settingsManager.saveSettings(defaults)
+            }
         }
 
         applySettings(currentSettings)
@@ -148,12 +153,16 @@ class TessellateEngine(
     }
 
     fun applySettings(settings: GameSettings) {
-        val sanitized = settingsManager.sanitize(settings)
-        currentSettings = sanitized
+        val sanitized = synchronized(settingsLock) {
+            val clean = settingsManager.sanitize(settings)
+            currentSettings = clean
+            clean
+        }
 
         synchronized(camera) {
             camera.fovDegrees = sanitized.fov
             camera.viewBobbingEnabled = sanitized.viewBobbing
+            camera.farPlane = maxOf(250f, sanitized.renderDistance * 16f * 1.6f)
             camera.updateProjection()
         }
 
@@ -177,16 +186,28 @@ class TessellateEngine(
         }
 
         worldScene.worldRenderer.showHitboxes = sanitized.showHitboxes
+        worldScene.profiler.enabled = sanitized.enableNanoTimeProfiler
         uiRenderer.showCoordinates = sanitized.showCoordinates
         uiRenderer.showDebugHud = sanitized.showDebugHud
+        val prevScale = uiRenderer.uiScale
         uiRenderer.uiScale = sanitized.uiScale
-        uiRenderer.settingsScreen.refreshDynamicState()
+        if (prevScale == uiRenderer.uiScale) {
+            uiRenderer.settingsScreen.refreshDynamicState()
+        } else {
+            uiRenderer.invalidateHud()
+        }
     }
 
     fun updateAndPersistSettings(transform: (GameSettings) -> GameSettings): GameSettings {
-        val updated = settingsManager.sanitize(transform(currentSettings))
-        applySettings(updated)
-        settingsManager.saveSettings(updated)
+        val updated = synchronized(settingsLock) {
+            val candidate = settingsManager.sanitize(transform(currentSettings))
+            if (candidate == currentSettings) {
+                return currentSettings
+            }
+            applySettings(candidate)
+            settingsManager.saveSettings(candidate)
+            candidate
+        }
         return updated
     }
 
@@ -199,9 +220,11 @@ class TessellateEngine(
     }
 
     fun resetAllSettingsToDefaults() {
-        val defaults = GameSettings(modValues = currentSettings.modValues)
-        applySettings(defaults)
-        settingsManager.saveSettings(defaults)
+        synchronized(settingsLock) {
+            val defaults = GameSettings(modValues = currentSettings.modValues)
+            applySettings(defaults)
+            settingsManager.saveSettings(defaults)
+        }
         uiRenderer.settingsScreen.rebuildLayout()
     }
 
@@ -493,8 +516,13 @@ class TessellateEngine(
             worldScene.worldRenderer.processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
         }
 
-        val (frameAppState, frameMode, framePaused) = synchronized(modeLock) {
-            Triple(currentAppState, currentSceneMode, isPaused)
+        val frameAppState: AppState
+        val frameMode: SceneMode
+        val framePaused: Boolean
+        synchronized(modeLock) {
+            frameAppState = currentAppState
+            frameMode = currentSceneMode
+            framePaused = isPaused
         }
 
         if (frameAppState != AppState.PLAYING) {

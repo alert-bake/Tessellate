@@ -83,6 +83,14 @@ class Player(
         posX + radius, posY + currentHeight, posZ + radius
     )
 
+    // Pre-allocated mutable scratch AABBs to ensure zero allocations during tick/update loops
+    private val scratchFeetStepBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchClearanceBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchStandingTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchMoveTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchBlockBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchGroundTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+
     fun updateBoundingBox() {
         boundingBox.set(
             posX - radius, posY, posZ - radius,
@@ -185,7 +193,7 @@ class Player(
         val dirZ = stepDz / probeLen
         val lookAheadDist = (radius + 0.18f)
 
-        val feetStepBox = AABB(
+        scratchFeetStepBox.set(
             posX + dirX * lookAheadDist - radius * 0.8f,
             posY + 0.05f,
             posZ + dirZ * lookAheadDist - radius * 0.8f,
@@ -193,9 +201,9 @@ class Player(
             posY + 0.95f,
             posZ + dirZ * lookAheadDist + radius * 0.8f
         )
-        if (!hasBlockCollision(feetStepBox, world)) return
+        if (!hasBlockCollision(scratchFeetStepBox, world)) return
 
-        val clearanceBox = AABB(
+        scratchClearanceBox.set(
             posX + dirX * lookAheadDist - radius * 0.8f,
             posY + 1.05f,
             posZ + dirZ * lookAheadDist - radius * 0.8f,
@@ -203,7 +211,7 @@ class Player(
             posY + 1.05f + currentHeight,
             posZ + dirZ * lookAheadDist + radius * 0.8f
         )
-        if (!hasBlockCollision(clearanceBox, world)) {
+        if (!hasBlockCollision(scratchClearanceBox, world)) {
             jump()
         }
     }
@@ -214,11 +222,11 @@ class Player(
             isCrouching = true
         } else if (isCrouching) {
             // Only un-crouch if there is vertical clearance above the player
-            val standingTestBox = AABB(
+            scratchStandingTestBox.set(
                 posX - radius, posY, posZ - radius,
                 posX + radius, posY + standingHeight, posZ + radius
             )
-            val ceilingObstructed = hasBlockCollision(standingTestBox, world)
+            val ceilingObstructed = hasBlockCollision(scratchStandingTestBox, world)
             if (!ceilingObstructed) {
                 isCrouching = false
             }
@@ -233,7 +241,8 @@ class Player(
 
         // --- Y Axis Collision (Ground / Ceiling) ---
         if (resolvedDy != 0f) {
-            val testBoxY = AABB(
+            val testBoxY = scratchMoveTestBox
+            testBoxY.set(
                 posX - radius, posY + resolvedDy, posZ - radius,
                 posX + radius, posY + currentHeight + resolvedDy, posZ + radius
             )
@@ -250,7 +259,8 @@ class Player(
                     for (bz in minZ..maxZ) {
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
-                            val blockBox = AABB(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            val blockBox = scratchBlockBox
+                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
                             if (testBoxY.intersects(blockBox)) {
                                 if (resolvedDy < 0f) {
                                     // Landed on block top
@@ -285,7 +295,8 @@ class Player(
 
         // --- X Axis Collision ---
         if (resolvedDx != 0f) {
-            val testBoxX = AABB(
+            val testBoxX = scratchMoveTestBox
+            testBoxX.set(
                 posX + resolvedDx - radius, posY + 0.05f, posZ - radius,
                 posX + resolvedDx + radius, posY + currentHeight - 0.05f, posZ + radius
             )
@@ -302,7 +313,8 @@ class Player(
                     for (bz in minZ..maxZ) {
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
-                            val blockBox = AABB(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            val blockBox = scratchBlockBox
+                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
                             if (testBoxX.intersects(blockBox)) {
                                 if (resolvedDx > 0f) {
                                     posX = blockBox.minX - radius - 0.001f
@@ -328,7 +340,8 @@ class Player(
 
         // --- Z Axis Collision ---
         if (resolvedDz != 0f) {
-            val testBoxZ = AABB(
+            val testBoxZ = scratchMoveTestBox
+            testBoxZ.set(
                 posX - radius, posY + 0.05f, posZ + resolvedDz - radius,
                 posX + radius, posY + currentHeight - 0.05f, posZ + resolvedDz + radius
             )
@@ -345,7 +358,8 @@ class Player(
                     for (bz in minZ..maxZ) {
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
-                            val blockBox = AABB(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            val blockBox = scratchBlockBox
+                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
                             if (testBoxZ.intersects(blockBox)) {
                                 if (resolvedDz > 0f) {
                                     posZ = blockBox.minZ - radius - 0.001f
@@ -385,11 +399,11 @@ class Player(
     }
 
     private fun checkGroundSupport(world: World) {
-        val groundTest = AABB(
+        scratchGroundTestBox.set(
             posX - radius + 0.05f, posY - 0.08f, posZ - radius + 0.05f,
             posX + radius - 0.05f, posY + 0.01f, posZ + radius - 0.05f
         )
-        isGrounded = hasBlockCollision(groundTest, world)
+        isGrounded = hasBlockCollision(scratchGroundTestBox, world)
     }
 
     fun hasBlockCollision(aabb: AABB, world: World): Boolean {
@@ -400,12 +414,13 @@ class Player(
         val minZ = floor(aabb.minZ).toInt()
         val maxZ = floor(aabb.maxZ).toInt()
 
+        val blockBox = scratchBlockBox
         for (bx in minX..maxX) {
             for (by in minY..maxY) {
                 for (bz in minZ..maxZ) {
                     val block = world.getBlock(bx, by, bz)
                     if (block.isSolid) {
-                        val blockBox = AABB(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                        blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
                         if (aabb.intersects(blockBox)) {
                             return true
                         }

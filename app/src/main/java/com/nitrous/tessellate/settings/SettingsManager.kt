@@ -203,6 +203,7 @@ class SettingsManager(
                 enableDebugOptions = readBoolean("enableDebugOptions", defaults.enableDebugOptions),
                 showDebugHud = readBoolean("showDebugHud", defaults.showDebugHud),
                 showHitboxes = readBoolean("showHitboxes", defaults.showHitboxes),
+                enableNanoTimeProfiler = readBoolean("enableNanoTimeProfiler", defaults.enableNanoTimeProfiler),
                 modValues = modMap
             )
         )
@@ -210,11 +211,22 @@ class SettingsManager(
 
     private fun writeSettingsToDisk(sanitized: GameSettings): Boolean = synchronized(fileLock) {
         return try {
-            settingsFile.parentFile?.let { parent ->
-                if (!parent.exists()) parent.mkdirs()
+            val parent = settingsFile.parentFile
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs()
             }
             val json = adapter.toJson(sanitized)
-            settingsFile.writeText(json)
+            val tmpFile = File(parent ?: settingsFile.absoluteFile.parentFile, "${settingsFile.name}.tmp")
+            tmpFile.writeText(json)
+            if (settingsFile.exists()) {
+                if (!tmpFile.renameTo(settingsFile)) {
+                    settingsFile.writeText(json)
+                    tmpFile.delete()
+                }
+            } else if (!tmpFile.renameTo(settingsFile)) {
+                settingsFile.writeText(json)
+                tmpFile.delete()
+            }
             Log.i(TAG, "Settings saved successfully.")
             true
         } catch (e: Exception) {
@@ -269,6 +281,7 @@ class SettingsManager(
             enableDebugOptions = candidate.enableDebugOptions,
             showDebugHud = candidate.showDebugHud,
             showHitboxes = candidate.showHitboxes,
+            enableNanoTimeProfiler = candidate.enableNanoTimeProfiler,
             modValues = candidate.modValues.toMap()
         )
     }

@@ -52,26 +52,35 @@ class SettingsScreen(
 
     val fovSliderRect = RectF()
 
+    @Volatile
     var activeScreenTarget: SettingScreenTarget = SettingScreenTarget.SETTINGS
         private set
 
+    @Volatile
     var activeCategoryId: String? = null
         private set
 
+    @Volatile
     var pendingConfirmationSetting: SettingDefinition? = null
         private set
 
+    @Volatile
     var statusBannerText: String? = null
         private set
+
+    private val layoutLock = Any()
 
     private var surfaceWidth: Int = 1920
     private var surfaceHeight: Int = 1080
     private var scrollOffsetRows: Int = 0
     private var maxVisibleRows: Int = 4
 
-    private val categoryTabButtons = mutableListOf<Pair<SettingCategory, UiButton>>()
-    private val rowItems = mutableListOf<SettingRowUi>()
-    private val interactiveButtons = mutableListOf<UiButton>()
+    @Volatile
+    private var categoryTabButtons: List<Pair<SettingCategory, UiButton>> = emptyList()
+    @Volatile
+    private var rowItems: List<SettingRowUi> = emptyList()
+    @Volatile
+    private var interactiveButtons: List<UiButton> = emptyList()
 
     private val confirmAcceptButton = UiButton(MenuButtonId.SETTINGS_DYNAMIC, "Confirm", actionKey = "confirm_accept")
     private val confirmCancelButton = UiButton(MenuButtonId.SETTINGS_DYNAMIC, "Cancel", actionKey = "confirm_cancel")
@@ -80,54 +89,71 @@ class SettingsScreen(
     private val scrollUpButton = UiButton(MenuButtonId.SETTINGS_DYNAMIC, "^", actionKey = "scroll_up")
     private val scrollDownButton = UiButton(MenuButtonId.SETTINGS_DYNAMIC, "v", actionKey = "scroll_down")
 
+    @Volatile
     private var draggingSliderRow: SettingRowUi? = null
 
+    @Volatile
     var titleCenterX: Float = 960f
         private set
+    @Volatile
     var titleCenterY: Float = 84f
         private set
+    @Volatile
     var titleScale: Int = 3
         private set
+    @Volatile
     var buttonFontScale: Int = 2
         private set
 
     fun setScreenTarget(target: SettingScreenTarget) {
-        if (activeScreenTarget != target) {
-            activeScreenTarget = target
-            activeCategoryId = null
-            scrollOffsetRows = 0
-            pendingConfirmationSetting = null
-            statusBannerText = null
-        } else {
-            pendingConfirmationSetting = null
+        synchronized(layoutLock) {
+            if (activeScreenTarget != target) {
+                activeScreenTarget = target
+                activeCategoryId = null
+                scrollOffsetRows = 0
+                pendingConfirmationSetting = null
+                statusBannerText = null
+            } else {
+                pendingConfirmationSetting = null
+            }
+            rebuildLayoutLocked()
         }
-        rebuildLayout()
     }
 
     fun selectCategory(categoryId: String) {
-        activeCategoryId = categoryId
-        scrollOffsetRows = 0
-        pendingConfirmationSetting = null
-        rebuildLayout()
+        synchronized(layoutLock) {
+            activeCategoryId = categoryId
+            scrollOffsetRows = 0
+            pendingConfirmationSetting = null
+            rebuildLayoutLocked()
+        }
     }
 
     fun refreshDynamicState() {
         rebuildLayout()
     }
 
-    fun getInteractiveButtons(): List<UiButton> = interactiveButtons.toList()
+    fun getInteractiveButtons(): List<UiButton> = interactiveButtons
 
-    fun getVisibleRows(): List<SettingRowUi> = rowItems.toList()
+    fun getVisibleRows(): List<SettingRowUi> = rowItems
 
     fun getCategoryTabs(): List<SettingCategory> = categoryTabButtons.map { it.first }
 
     fun onSurfaceChanged(width: Int, height: Int) {
-        surfaceWidth = width.coerceAtLeast(1)
-        surfaceHeight = height.coerceAtLeast(1)
-        rebuildLayout()
+        synchronized(layoutLock) {
+            surfaceWidth = width.coerceAtLeast(1)
+            surfaceHeight = height.coerceAtLeast(1)
+            rebuildLayoutLocked()
+        }
     }
 
     fun rebuildLayout() {
+        synchronized(layoutLock) {
+            rebuildLayoutLocked()
+        }
+    }
+
+    private fun rebuildLayoutLocked() {
         val w = surfaceWidth.toFloat().coerceAtLeast(1f)
         val h = surfaceHeight.toFloat().coerceAtLeast(1f)
 
@@ -147,8 +173,8 @@ class SettingsScreen(
             activeCategoryId = null
         }
 
-        // Build category tabs row
-        categoryTabButtons.clear()
+        // Build category tabs row into fresh snapshot lists (never mutate rendered lists in-place!)
+        val newTabButtons = mutableListOf<Pair<SettingCategory, UiButton>>()
         val tabTop = (titleCenterY + 34f).coerceAtLeast(66f)
         val tabHeight = (h * 0.075f).coerceIn(48f, 56f)
         val tabGap = 10f
@@ -167,7 +193,7 @@ class SettingsScreen(
                     actionKey = "cat:${cat.id}"
                 )
                 btn.rect.set(curX, tabTop, curX + tabWidth, tabTop + tabHeight)
-                categoryTabButtons.add(cat to btn)
+                newTabButtons.add(cat to btn)
                 curX += tabWidth + tabGap
             }
         }
@@ -209,11 +235,9 @@ class SettingsScreen(
         val contentWidth = (w * 0.72f).coerceIn(460f, 900f)
         val contentLeft = (w - contentWidth) * 0.5f
 
-        rowItems.clear()
-        interactiveButtons.clear()
-        fovMinusButton.rect.setEmpty()
-        fovPlusButton.rect.setEmpty()
-        fovSliderRect.setEmpty()
+        val newRows = mutableListOf<SettingRowUi>()
+        val newInteractive = mutableListOf<UiButton>()
+        var hasVisibleFovRow = false
 
         for ((index, def) in visibleDefs.withIndex()) {
             val rTop = listTop + index * stride
@@ -229,6 +253,7 @@ class SettingsScreen(
                     val gap = 8f
                     val trackWidth = (controlAreaWidth - stepSize * 2f - gap * 2f).coerceAtLeast(96f)
                     val isFov = (def.id == "tessellate:fov")
+                    if (isFov) hasVisibleFovRow = true
                     val minusBtn = if (isFov) {
                         fovMinusButton.apply {
                             rect.set(controlLeft, rTop, controlLeft + stepSize, rBottom)
@@ -266,8 +291,8 @@ class SettingsScreen(
                             rect.set(plusLeft, rTop, plusLeft + stepSize, rBottom)
                         }
                     }
-                    interactiveButtons.add(minusBtn)
-                    interactiveButtons.add(plusBtn)
+                    newInteractive.add(minusBtn)
+                    newInteractive.add(plusBtn)
                     SettingRowUi(
                         definition = def,
                         minusButton = minusBtn,
@@ -287,7 +312,7 @@ class SettingsScreen(
                     ).apply {
                         rect.set(controlLeft, rTop, rowRect.right, rBottom)
                     }
-                    interactiveButtons.add(btn)
+                    newInteractive.add(btn)
                     SettingRowUi(definition = def, actionButton = btn, rowRect = rowRect)
                 }
 
@@ -301,16 +326,22 @@ class SettingsScreen(
                     ).apply {
                         rect.set(btnLeft, rTop, btnLeft + btnWidth, rBottom)
                     }
-                    interactiveButtons.add(btn)
+                    newInteractive.add(btn)
                     SettingRowUi(definition = def, actionButton = btn, rowRect = rowRect)
                 }
             }
-            rowItems.add(rowUi)
+            newRows.add(rowUi)
+        }
+
+        if (!hasVisibleFovRow) {
+            fovMinusButton.rect.setEmpty()
+            fovPlusButton.rect.setEmpty()
+            fovSliderRect.setEmpty()
         }
 
         // Add tabs & footer & scroll buttons
-        for ((_, tabBtn) in categoryTabButtons) {
-            interactiveButtons.add(tabBtn)
+        for ((_, tabBtn) in newTabButtons) {
+            newInteractive.add(tabBtn)
         }
         if (defs.size > maxVisibleRows) {
             val scrollSize = 48f
@@ -319,8 +350,8 @@ class SettingsScreen(
             scrollUpButton.rect.set(scrollLeft, listTop, scrollLeft + scrollSize, listTop + scrollSize)
             scrollDownButton.enabled = scrollOffsetRows < maxScroll
             scrollDownButton.rect.set(scrollLeft, listBottom - scrollSize, scrollLeft + scrollSize, listBottom)
-            interactiveButtons.add(scrollUpButton)
-            interactiveButtons.add(scrollDownButton)
+            newInteractive.add(scrollUpButton)
+            newInteractive.add(scrollDownButton)
         } else {
             scrollUpButton.rect.setEmpty()
             scrollDownButton.rect.setEmpty()
@@ -333,19 +364,24 @@ class SettingsScreen(
             val btnH = 48f
             confirmAcceptButton.rect.set(w * 0.5f - btnW - 12f, bannerTop, w * 0.5f - 12f, bannerTop + btnH)
             confirmCancelButton.rect.set(w * 0.5f + 12f, bannerTop, w * 0.5f + btnW + 12f, bannerTop + btnH)
-            interactiveButtons.add(confirmAcceptButton)
-            interactiveButtons.add(confirmCancelButton)
+            newInteractive.add(confirmAcceptButton)
+            newInteractive.add(confirmCancelButton)
         } else if (pendingPerm != null) {
             val bannerTop = footerTop - 64f
             val btnW = 160f
             val btnH = 48f
             permApproveButton.rect.set(w * 0.5f - btnW - 12f, bannerTop, w * 0.5f - 12f, bannerTop + btnH)
             permDenyButton.rect.set(w * 0.5f + 12f, bannerTop, w * 0.5f + btnW + 12f, bannerTop + btnH)
-            interactiveButtons.add(permApproveButton)
-            interactiveButtons.add(permDenyButton)
+            newInteractive.add(permApproveButton)
+            newInteractive.add(permDenyButton)
         }
 
-        interactiveButtons.add(backButton)
+        newInteractive.add(backButton)
+
+        // Atomically publish immutable snapshot lists for GLThread rendering & UI touch hit testing
+        categoryTabButtons = newTabButtons.toList()
+        rowItems = newRows.toList()
+        interactiveButtons = newInteractive.toList()
     }
 
     fun clearHoverStates() {
@@ -391,13 +427,17 @@ class SettingsScreen(
                 true
             }
             key == "scroll_up" -> {
-                scrollOffsetRows = (scrollOffsetRows - 1).coerceAtLeast(0)
-                rebuildLayout()
+                synchronized(layoutLock) {
+                    scrollOffsetRows = (scrollOffsetRows - 1).coerceAtLeast(0)
+                    rebuildLayoutLocked()
+                }
                 true
             }
             key == "scroll_down" -> {
-                scrollOffsetRows++
-                rebuildLayout()
+                synchronized(layoutLock) {
+                    scrollOffsetRows++
+                    rebuildLayoutLocked()
+                }
                 true
             }
             key == "confirm_accept" -> {
@@ -413,8 +453,10 @@ class SettingsScreen(
                 val pending = pm?.getPendingApprovalRecords()?.firstOrNull()
                 if (pending != null) {
                     pm.approveModPermissions(pending.modId)
-                    statusBannerText = "Approved permissions for ${pending.displayName}"
-                    rebuildLayout()
+                    synchronized(layoutLock) {
+                        statusBannerText = "Approved permissions for ${pending.displayName}"
+                        rebuildLayoutLocked()
+                    }
                 }
                 true
             }
@@ -423,8 +465,10 @@ class SettingsScreen(
                 val pending = pm?.getPendingApprovalRecords()?.firstOrNull()
                 if (pending != null) {
                     pm.denyModPermissions(pending.modId)
-                    statusBannerText = "Denied permissions for ${pending.displayName}"
-                    rebuildLayout()
+                    synchronized(layoutLock) {
+                        statusBannerText = "Denied permissions for ${pending.displayName}"
+                        rebuildLayoutLocked()
+                    }
                 }
                 true
             }
@@ -444,13 +488,17 @@ class SettingsScreen(
                 when (def.controlType) {
                     SettingControlType.TOGGLE -> {
                         registry.toggleValue(settingId)
-                        statusBannerText = null
-                        rebuildLayout()
+                        synchronized(layoutLock) {
+                            statusBannerText = null
+                            rebuildLayoutLocked()
+                        }
                     }
                     SettingControlType.SELECTOR -> {
                         registry.cycleSelector(settingId, 1)
-                        statusBannerText = null
-                        rebuildLayout()
+                        synchronized(layoutLock) {
+                            statusBannerText = null
+                            rebuildLayoutLocked()
+                        }
                     }
                     SettingControlType.BUTTON -> {
                         triggerButtonSetting(def)
@@ -465,30 +513,41 @@ class SettingsScreen(
 
     fun triggerButtonSetting(def: SettingDefinition): ReferenceActionResult? {
         if (def.requiresConfirmation) {
-            pendingConfirmationSetting = def
-            statusBannerText = def.confirmationMessage ?: "Confirm ${def.label}?"
-            rebuildLayout()
+            synchronized(layoutLock) {
+                pendingConfirmationSetting = def
+                statusBannerText = def.confirmationMessage ?: "Confirm ${def.label}?"
+                rebuildLayoutLocked()
+            }
             return null
         }
         val res = engine.settingsRegistry.invokeAction(def.id)
-        statusBannerText = res.message.takeIf { it.isNotBlank() }
-        rebuildLayout()
+        synchronized(layoutLock) {
+            statusBannerText = res.message.takeIf { it.isNotBlank() }
+            rebuildLayoutLocked()
+        }
         return res
     }
 
     fun confirmPendingAction(): ReferenceActionResult? {
-        val def = pendingConfirmationSetting ?: return null
-        pendingConfirmationSetting = null
+        val def = synchronized(layoutLock) {
+            val pending = pendingConfirmationSetting ?: return null
+            pendingConfirmationSetting = null
+            pending
+        }
         val res = engine.settingsRegistry.invokeAction(def.id)
-        statusBannerText = res.message.takeIf { it.isNotBlank() }
-        rebuildLayout()
+        synchronized(layoutLock) {
+            statusBannerText = res.message.takeIf { it.isNotBlank() }
+            rebuildLayoutLocked()
+        }
         return res
     }
 
     fun cancelPendingAction() {
-        pendingConfirmationSetting = null
-        statusBannerText = "Cancelled."
-        rebuildLayout()
+        synchronized(layoutLock) {
+            pendingConfirmationSetting = null
+            statusBannerText = "Cancelled."
+            rebuildLayoutLocked()
+        }
     }
 
     private fun stepSlider(settingId: String, direction: Int) {
@@ -548,6 +607,7 @@ class SettingsScreen(
         val rawValue = min + fraction * (max - min)
         engine.settingsRegistry.setValue(def.id, rawValue, persist = true)
         rebuildLayout()
+        draggingSliderRow = rowItems.firstOrNull { it.definition.id == def.id }
     }
 
     fun render(
@@ -563,15 +623,21 @@ class SettingsScreen(
         } else {
             "SETTINGS"
         }
+        val tabSnapshot = categoryTabButtons
+        val rowSnapshot = rowItems
+        val tCenterX = titleCenterX
+        val tCenterY = titleCenterY
+        val tScale = titleScale
+        val bFontScale = buttonFontScale
 
         fontRenderer.drawTextCentered(
             shader = shader,
             orthoMatrix = orthoMatrix,
             quadVaoId = quadVaoId,
             text = headerTitle,
-            centerX = titleCenterX,
-            centerY = titleCenterY,
-            scale = titleScale,
+            centerX = tCenterX,
+            centerY = tCenterY,
+            scale = tScale,
             r = 0.95f,
             g = 0.96f,
             b = 0.98f,
@@ -579,18 +645,18 @@ class SettingsScreen(
         )
 
         // Category tabs
-        for ((_, tabBtn) in categoryTabButtons) {
-            drawButtonFn(tabBtn, buttonFontScale)
+        for ((_, tabBtn) in tabSnapshot) {
+            drawButtonFn(tabBtn, bFontScale)
         }
 
         // Data-driven setting rows
         val registry = engine.settingsRegistry
-        for (row in rowItems) {
+        for (row in rowSnapshot) {
             val def = row.definition
             when (def.controlType) {
                 SettingControlType.SLIDER -> {
                     val labelX = row.rowRect.left + 8f
-                    val labelY = row.rowRect.centerY() - fontRenderer.measureHeight(buttonFontScale) * 0.5f
+                    val labelY = row.rowRect.centerY() - fontRenderer.measureHeight(bFontScale) * 0.5f
                     fontRenderer.drawText(
                         shader = shader,
                         orthoMatrix = orthoMatrix,
@@ -598,7 +664,7 @@ class SettingsScreen(
                         text = def.label,
                         x = labelX,
                         y = labelY,
-                        scale = buttonFontScale,
+                        scale = bFontScale,
                         r = 0.94f, g = 0.96f, b = 0.95f, a = 1f,
                         shadow = true
                     )
@@ -608,7 +674,7 @@ class SettingsScreen(
                     val current = (registry.getValue(def.id) as? Number)?.toDouble() ?: min
                     val fraction = ((current - min) / (max - min).coerceAtLeast(1e-5)).toFloat().coerceIn(0f, 1f)
 
-                    row.minusButton?.let { drawButtonFn(it, buttonFontScale) }
+                    row.minusButton?.let { drawButtonFn(it, bFontScale) }
                     drawSliderTrackFn(row.sliderTrackRect, fraction)
                     val formatted = registry.formatValueDisplay(def.id)
                     val sliderText = if (def.id == "tessellate:fov") "FOV: $formatted" else formatted
@@ -619,16 +685,16 @@ class SettingsScreen(
                         text = sliderText,
                         centerX = row.sliderTrackRect.centerX(),
                         centerY = row.sliderTrackRect.centerY(),
-                        scale = buttonFontScale,
+                        scale = bFontScale,
                         r = 1f, g = 1f, b = 1f, a = 1f
                     )
-                    row.plusButton?.let { drawButtonFn(it, buttonFontScale) }
+                    row.plusButton?.let { drawButtonFn(it, bFontScale) }
                 }
 
                 SettingControlType.TOGGLE,
                 SettingControlType.SELECTOR -> {
                     val labelX = row.rowRect.left + 8f
-                    val labelY = row.rowRect.centerY() - fontRenderer.measureHeight(buttonFontScale) * 0.5f
+                    val labelY = row.rowRect.centerY() - fontRenderer.measureHeight(bFontScale) * 0.5f
                     fontRenderer.drawText(
                         shader = shader,
                         orthoMatrix = orthoMatrix,
@@ -636,25 +702,25 @@ class SettingsScreen(
                         text = def.label,
                         x = labelX,
                         y = labelY,
-                        scale = buttonFontScale,
+                        scale = bFontScale,
                         r = 0.94f, g = 0.96f, b = 0.95f, a = 1f,
                         shadow = true
                     )
-                    row.actionButton?.let { drawButtonFn(it, buttonFontScale) }
+                    row.actionButton?.let { drawButtonFn(it, bFontScale) }
                 }
 
                 SettingControlType.BUTTON -> {
-                    row.actionButton?.let { drawButtonFn(it, buttonFontScale) }
+                    row.actionButton?.let { drawButtonFn(it, bFontScale) }
                 }
             }
         }
 
         // Scroll buttons if overflowing
         if (!scrollUpButton.rect.isEmpty) {
-            drawButtonFn(scrollUpButton, buttonFontScale)
+            drawButtonFn(scrollUpButton, bFontScale)
         }
         if (!scrollDownButton.rect.isEmpty) {
-            drawButtonFn(scrollDownButton, buttonFontScale)
+            drawButtonFn(scrollDownButton, bFontScale)
         }
 
         // Confirmation dialog or Mod Permission Prompt or Status banner
@@ -662,6 +728,7 @@ class SettingsScreen(
         val pendingPerm = if (activeScreenTarget == SettingScreenTarget.SETTINGS) {
             engine.luaModRuntimeOrNull()?.permissionManager?.getPendingApprovalRecords()?.firstOrNull()
         } else null
+        val banner = statusBannerText
 
         if (pendingConfirm != null) {
             fontRenderer.drawTextCentered(
@@ -669,40 +736,40 @@ class SettingsScreen(
                 orthoMatrix = orthoMatrix,
                 quadVaoId = quadVaoId,
                 text = pendingConfirm.confirmationMessage ?: "Confirm ${pendingConfirm.label}?",
-                centerX = titleCenterX,
+                centerX = tCenterX,
                 centerY = confirmAcceptButton.rect.top - 18f,
                 scale = 2,
                 r = 1.0f, g = 0.78f, b = 0.35f, a = 1f
             )
-            drawButtonFn(confirmAcceptButton, buttonFontScale)
-            drawButtonFn(confirmCancelButton, buttonFontScale)
+            drawButtonFn(confirmAcceptButton, bFontScale)
+            drawButtonFn(confirmCancelButton, bFontScale)
         } else if (pendingPerm != null) {
             fontRenderer.drawTextCentered(
                 shader = shader,
                 orthoMatrix = orthoMatrix,
                 quadVaoId = quadVaoId,
                 text = pendingPerm.userPromptSummary.take(64),
-                centerX = titleCenterX,
+                centerX = tCenterX,
                 centerY = permApproveButton.rect.top - 18f,
                 scale = 2,
                 r = 0.98f, g = 0.88f, b = 0.45f, a = 1f
             )
-            drawButtonFn(permApproveButton, buttonFontScale)
-            drawButtonFn(permDenyButton, buttonFontScale)
-        } else if (!statusBannerText.isNullOrBlank()) {
+            drawButtonFn(permApproveButton, bFontScale)
+            drawButtonFn(permDenyButton, bFontScale)
+        } else if (!banner.isNullOrBlank()) {
             fontRenderer.drawTextCentered(
                 shader = shader,
                 orthoMatrix = orthoMatrix,
                 quadVaoId = quadVaoId,
-                text = statusBannerText!!.take(56),
-                centerX = titleCenterX,
+                text = banner.take(56),
+                centerX = tCenterX,
                 centerY = backButton.rect.top - 20f,
                 scale = 2,
                 r = 0.58f, g = 0.94f, b = 0.68f, a = 1f
             )
         }
 
-        drawButtonFn(backButton, buttonFontScale)
+        drawButtonFn(backButton, bFontScale)
     }
 
     companion object {

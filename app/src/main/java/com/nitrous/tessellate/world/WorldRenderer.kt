@@ -53,6 +53,12 @@ class WorldRenderer(
         private set
     var frustumCulledChunksCount: Int = 0
         private set
+    @Volatile
+    var lastFrameAtlasBindCount: Int = 0
+        private set
+    @Volatile
+    var lastRenderedChunksCount: Int = 0
+        private set
 
     fun getChunkMeshes(): List<ChunkMesh> = synchronized(meshSwapLock) { chunkMeshes.toList() }
 
@@ -149,7 +155,7 @@ class WorldRenderer(
                     } else {
                         ChunkMesh(c)
                     }
-                    if (initGlBuffers) {
+                    if (initGlBuffers && mesh.indexCount > 0) {
                         mesh.initGl()
                     }
                     chunkMeshMap[pos] = mesh
@@ -245,8 +251,13 @@ class WorldRenderer(
 
         initHighlightGl()
 
-        for (mesh in chunkMeshes) {
-            mesh.initGl()
+        synchronized(meshSwapLock) {
+            for (i in 0 until chunkMeshes.size) {
+                val mesh = chunkMeshes[i]
+                if (mesh.indexCount > 0) {
+                    mesh.initGl()
+                }
+            }
         }
     }
 
@@ -475,6 +486,8 @@ class WorldRenderer(
      * - Pass 2: Transparent geometry (GL_BLEND enabled, depth mask disabled during blend pass)
      */
     fun render(viewProjectionMatrix: FloatArray, texturePipeline: TexturePipeline, targetHit: RaycastHit?) {
+        lastFrameAtlasBindCount = 0
+        lastRenderedChunksCount = 0
         updateVisibleChunks(viewProjectionMatrix)
         val visibleChunks = visibleChunkMeshes
 
@@ -485,8 +498,10 @@ class WorldRenderer(
 
         shader.bind()
 
+        // Bind texture atlas strictly ONCE for all chunk geometry across both render passes
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, atlasHandle)
+        lastFrameAtlasBindCount = 1
         shader.setUniform1i("uTexture", 0)
 
         // Sun direction (overhead diagonal)
@@ -497,19 +512,31 @@ class WorldRenderer(
         Matrix4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix)
         shader.setUniformMatrix4fv("uMVPMatrix", mvpMatrix)
 
+        var renderedChunks = 0
+
         // Pass 1: Opaque blocks (Dirt, Stone, Grass)
         GLES30.glDisable(GLES30.GL_BLEND)
         GLES30.glDepthMask(true)
         for (i in 0 until visibleChunks.size) {
-            visibleChunks[i].renderOpaque()
+            val mesh = visibleChunks[i]
+            if (mesh.indexCount > 0) {
+                renderedChunks++
+            }
+            if (mesh.opaqueIndexCount > 0) {
+                mesh.renderOpaque()
+            }
         }
+        lastRenderedChunksCount = renderedChunks
 
         // Pass 2: Transparent blocks (Glass, Water, Leaves)
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDepthMask(false)
         for (i in 0 until visibleChunks.size) {
-            visibleChunks[i].renderTransparent()
+            val mesh = visibleChunks[i]
+            if (mesh.transparentIndexCount > 0) {
+                mesh.renderTransparent()
+            }
         }
         GLES30.glDepthMask(true)
 
@@ -627,8 +654,10 @@ class WorldRenderer(
     }
 
     fun markAllChunksDirty() {
-        for (mesh in chunkMeshes) {
-            mesh.chunk.markDirty()
+        synchronized(meshSwapLock) {
+            for (i in 0 until chunkMeshes.size) {
+                chunkMeshes[i].chunk.markDirty()
+            }
         }
     }
 

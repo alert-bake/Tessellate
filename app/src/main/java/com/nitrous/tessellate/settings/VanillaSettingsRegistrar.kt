@@ -183,6 +183,16 @@ object VanillaSettingsRegistrar {
             }
         )
 
+        refs.registerProperty(
+            id = "Profiler.nanoTime",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.enableNanoTimeProfiler },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(enableNanoTimeProfiler = v) }
+            }
+        )
+
         refs.registerCommand(
             id = "Command.fly",
             commandLine = "/fly",
@@ -490,6 +500,20 @@ object VanillaSettingsRegistrar {
                 categoryId = CAT_DEBUG_RENDERING,
                 screen = SettingScreenTarget.DEBUG_OPTIONS,
                 order = 20
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:debug_nanotime",
+                label = "NanoTime Profiler",
+                description = "Shows live nanoTime stage timings in HUD & Logcat",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "Profiler.nanoTime",
+                defaultValue = defaults.enableNanoTimeProfiler,
+                categoryId = CAT_DEBUG_RENDERING,
+                screen = SettingScreenTarget.DEBUG_OPTIONS,
+                order = 30
             )
         )
 

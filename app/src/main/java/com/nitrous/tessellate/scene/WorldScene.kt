@@ -1,6 +1,7 @@
 package com.nitrous.tessellate.scene
 
 import android.opengl.GLES30
+import com.nitrous.tessellate.core.FrameProfiler
 import com.nitrous.tessellate.core.IGameScene
 import com.nitrous.tessellate.core.IGraphicsRuntime
 import com.nitrous.tessellate.entity.Entity
@@ -95,9 +96,12 @@ class WorldScene : IGameScene {
     @Volatile
     private var cachedTexturePipeline: TexturePipeline? = null
 
+    val profiler = FrameProfiler()
+
     private val pickupEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
     private val renderEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
     private val viewProjScratch = com.nitrous.tessellate.graphics.Matrix4.create()
+    private val placementBoxScratch = AABB(0f, 0f, 0f, 0f, 0f, 0f)
 
     @Volatile
     private var hasInitializedSpawn = false
@@ -399,8 +403,8 @@ class WorldScene : IGameScene {
     }
 
     /**
-     * Updates dynamic world entities, chunk streaming, and player item pickups once per frame
-     * after [updatePlayer] and before [render].
+     * Updates dynamic world entities, chunk streaming, time-sliced lighting, and player item pickups
+     * once per frame after [updatePlayer] and before [render].
      */
     override fun update(deltaTimeSeconds: Float) {
         if (world.isDestroyed) return
@@ -408,9 +412,34 @@ class WorldScene : IGameScene {
             pendingWorldRegeneration = false
             performWorldRegeneration()
         }
+
+        val profileEnabled = profiler.enabled
+        val streamStartNs = if (profileEnabled) System.nanoTime() else 0L
         world.streamChunksAround(player.posX, player.posZ, cachedTexturePipeline)
-        world.tickEntities(deltaTimeSeconds)
+        val chunkGenMs = if (profileEnabled) {
+            val streamCallMs = (System.nanoTime() - streamStartNs) * FrameProfiler.NS_TO_MS
+            maxOf(streamCallMs, world.lastChunkGenMs)
+        } else 0f
+
+        val lightStartNs = if (profileEnabled) System.nanoTime() else 0L
+        world.stepLighting()
+        val lightingMs = if (profileEnabled) (System.nanoTime() - lightStartNs) * FrameProfiler.NS_TO_MS else 0f
+
+        val entityStartNs = if (profileEnabled) System.nanoTime() else 0L
+        world.tickEntities(deltaTimeSeconds, player.posX, player.posZ)
         checkItemPickups()
+        val entityUpdatesMs = if (profileEnabled) (System.nanoTime() - entityStartNs) * FrameProfiler.NS_TO_MS else 0f
+
+        profiler.recordUpdateStage(
+            chunkGenMs = chunkGenMs,
+            entityUpdateMs = entityUpdatesMs,
+            lightingMs = lightingMs,
+            tickedEntities = world.lastTickedEntitiesCount,
+            sleepingEntities = world.lastSleepingEntitiesCount
+        )
+        if (!isGlInitialized) {
+            profiler.maybeLog()
+        }
 
         if (saveStorage != null && currentSession != null && deltaTimeSeconds > 0f) {
             autosaveTimerSeconds += deltaTimeSeconds
@@ -490,15 +519,20 @@ class WorldScene : IGameScene {
         GLES30.glFrontFace(GLES30.GL_CCW)
         GLES30.glCullFace(GLES30.GL_BACK)
 
+        val profileEnabled = profiler.enabled
+
         // Update meshes within per-frame GPU budget, prioritizing chunks near the player
+        val meshStartNs = if (profileEnabled) System.nanoTime() else 0L
         worldRenderer.updateMeshes(
             texturePipeline = pipeline,
             uploadToGpu = true,
             focusX = player.posX,
             focusZ = player.posZ
         )
+        val meshBuildMs = if (profileEnabled) (System.nanoTime() - meshStartNs) * FrameProfiler.NS_TO_MS else 0f
 
         // Render visible world chunks and targeted block wireframe outline using matrix snapshot
+        val renderStartNs = if (profileEnabled) System.nanoTime() else 0L
         camera.copyViewProjectionMatrix(viewProjScratch)
         worldRenderer.render(viewProjScratch, pipeline, currentTargetHit)
 
@@ -510,6 +544,15 @@ class WorldScene : IGameScene {
         if (worldRenderer.showHitboxes) {
             worldRenderer.renderHitboxes(viewProjScratch, renderEntitiesScratch, player)
         }
+        val renderMs = if (profileEnabled) (System.nanoTime() - renderStartNs) * FrameProfiler.NS_TO_MS else 0f
+
+        profiler.recordRenderStage(
+            meshBuildMs = meshBuildMs,
+            renderMs = renderMs,
+            visibleChunks = worldRenderer.visibleChunksCount,
+            culledChunks = worldRenderer.frustumCulledChunksCount
+        )
+        profiler.maybeLog()
     }
 
     // --- Mining System Implementation ---
@@ -658,12 +701,12 @@ class WorldScene : IGameScene {
             return false
         }
 
-        // 3. Reject placing inside the player's bounding box
-        val placedBox = AABB(
+        // 3. Reject placing inside the player's bounding box (using pre-allocated scratch AABB)
+        placementBoxScratch.set(
             targetPos.x.toFloat(), targetPos.y.toFloat(), targetPos.z.toFloat(),
             targetPos.x + 1f, targetPos.y + 1f, targetPos.z + 1f
         )
-        if (player.boundingBox.intersects(placedBox)) {
+        if (player.boundingBox.intersects(placementBoxScratch)) {
             return false
         }
 

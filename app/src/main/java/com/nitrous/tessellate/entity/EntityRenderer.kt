@@ -80,6 +80,9 @@ class EntityRenderer {
         GLES30.glCullFace(GLES30.GL_BACK)
 
         shader.bind()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        shader.setUniform1i("uTexture", 0)
+        var lastBoundHandle = -1
 
         for (i in 0 until entities.size) {
             val entity = entities[i]
@@ -102,7 +105,12 @@ class EntityRenderer {
 
             shader.setUniformMatrix4fv("uMVPMatrix", mvpMatrix)
             val textureId = resolveEntityTextureId(entity)
-            mesh.drawUniformBlock(texturePipeline, shader, textureId)
+            val handle = texturePipeline.getTextureHandle(textureId)
+            if (handle != lastBoundHandle) {
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, handle)
+                lastBoundHandle = handle
+            }
+            mesh.drawUniformBlock(texturePipeline, shader, textureId, bindTexture = false)
         }
 
         shader.unbind()

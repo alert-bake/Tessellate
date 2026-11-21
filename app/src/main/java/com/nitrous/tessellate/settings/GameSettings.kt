@@ -20,6 +20,7 @@ data class GameSettings(
     var enableDebugOptions: Boolean = false,
     var showDebugHud: Boolean = true,
     var showHitboxes: Boolean = false,
+    var enableNanoTimeProfiler: Boolean = false,
     var modValues: Map<String, String> = emptyMap()
 ) {
     companion object {

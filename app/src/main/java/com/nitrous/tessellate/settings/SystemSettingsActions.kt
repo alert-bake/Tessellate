@@ -73,8 +73,8 @@ object SystemSettingsActions {
                 } else {
                     ReferenceActionResult(false, "File manager unavailable. Path: ${baseFilesDir.absolutePath}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed launching custom app folder handler", e)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed launching custom app folder handler", t)
                 ReferenceActionResult(false, "Unsupported file manager operation. Path: ${baseFilesDir.absolutePath}")
             }
         }
@@ -109,9 +109,9 @@ object SystemSettingsActions {
         } catch (e: SecurityException) {
             Log.w(TAG, "Security restriction opening app folder directly", e)
             ReferenceActionResult(false, "File manager access restricted. Path: ${baseFilesDir.absolutePath}")
-        } catch (e: Exception) {
-            Log.w(TAG, "Unsupported file manager operation", e)
-            ReferenceActionResult(false, "Could not open folder: ${e.message ?: "unsupported"}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unsupported file manager operation", t)
+            ReferenceActionResult(false, "Could not open folder: ${t.message ?: "unsupported"}")
         }
     }
 

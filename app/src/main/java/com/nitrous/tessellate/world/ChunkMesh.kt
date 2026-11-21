@@ -89,36 +89,84 @@ class ChunkMesh(
     private var transparentVertexFloatLength: Int = 0
     private var transparentIndexArrayLength: Int = 0
 
+    val hasOpaqueGpuBuffers: Boolean
+        get() = opaqueVaoId != 0 || opaqueVboId != 0 || opaqueEboId != 0
+
+    val hasTransparentGpuBuffers: Boolean
+        get() = transparentVaoId != 0 || transparentVboId != 0 || transparentEboId != 0
+
+    val hasAllocatedGpuBuffers: Boolean
+        get() = hasOpaqueGpuBuffers || hasTransparentGpuBuffers
+
+    // Reusable 2-int scratch array for GL handle allocation/deletion
+    private val glHandleScratch = IntArray(2)
+
     fun initGl() {
         if (chunk.isEmpty) return
-        initOpaqueGl()
-        initTransparentGl()
+        if (opaqueIndexCount > 0) {
+            initOpaqueGl()
+        }
+        if (transparentIndexCount > 0) {
+            initTransparentGl()
+        }
     }
 
     private fun initOpaqueGl() {
         if (opaqueVaoId == 0) {
-            val vao = IntArray(1)
-            val buffers = IntArray(2)
-            GLES30.glGenVertexArrays(1, vao, 0)
-            GLES30.glGenBuffers(2, buffers, 0)
-            opaqueVaoId = vao[0]
-            opaqueVboId = buffers[0]
-            opaqueEboId = buffers[1]
+            GLES30.glGenVertexArrays(1, glHandleScratch, 0)
+            val allocatedVao = glHandleScratch[0]
+            GLES30.glGenBuffers(2, glHandleScratch, 0)
+            opaqueVaoId = allocatedVao
+            opaqueVboId = glHandleScratch[0]
+            opaqueEboId = glHandleScratch[1]
             configureVao(opaqueVaoId, opaqueVboId, opaqueEboId)
         }
     }
 
     private fun initTransparentGl() {
         if (transparentVaoId == 0) {
-            val vao = IntArray(1)
-            val buffers = IntArray(2)
-            GLES30.glGenVertexArrays(1, vao, 0)
-            GLES30.glGenBuffers(2, buffers, 0)
-            transparentVaoId = vao[0]
-            transparentVboId = buffers[0]
-            transparentEboId = buffers[1]
+            GLES30.glGenVertexArrays(1, glHandleScratch, 0)
+            val allocatedVao = glHandleScratch[0]
+            GLES30.glGenBuffers(2, glHandleScratch, 0)
+            transparentVaoId = allocatedVao
+            transparentVboId = glHandleScratch[0]
+            transparentEboId = glHandleScratch[1]
             configureVao(transparentVaoId, transparentVboId, transparentEboId)
         }
+    }
+
+    private fun releaseOpaqueGl() {
+        if (opaqueVaoId != 0) {
+            glHandleScratch[0] = opaqueVaoId
+            GLES30.glDeleteVertexArrays(1, glHandleScratch, 0)
+            opaqueVaoId = 0
+        }
+        if (opaqueVboId != 0 || opaqueEboId != 0) {
+            glHandleScratch[0] = opaqueVboId
+            glHandleScratch[1] = opaqueEboId
+            GLES30.glDeleteBuffers(2, glHandleScratch, 0)
+            opaqueVboId = 0
+            opaqueEboId = 0
+        }
+        opaqueVertexBuffer = null
+        opaqueIndexBuffer = null
+    }
+
+    private fun releaseTransparentGl() {
+        if (transparentVaoId != 0) {
+            glHandleScratch[0] = transparentVaoId
+            GLES30.glDeleteVertexArrays(1, glHandleScratch, 0)
+            transparentVaoId = 0
+        }
+        if (transparentVboId != 0 || transparentEboId != 0) {
+            glHandleScratch[0] = transparentVboId
+            glHandleScratch[1] = transparentEboId
+            GLES30.glDeleteBuffers(2, glHandleScratch, 0)
+            transparentVboId = 0
+            transparentEboId = 0
+        }
+        transparentVertexBuffer = null
+        transparentIndexBuffer = null
     }
 
     private fun configureVao(vao: Int, vbo: Int, ebo: Int) {
@@ -221,8 +269,11 @@ class ChunkMesh(
                         val nly = ly + dir.dy
                         val nlz = lz + dir.dz
 
-                        val neighborId: Byte = if ((nlx or nly or nlz) and -16 == 0) {
-                            chunk.getBlockIdUnchecked(nlx, nly, nlz)
+                        val neighborId: Byte
+                        val neighborRenderedLight: Int
+                        if (((nlx or nly or nlz) and -16) == 0) {
+                            neighborId = chunk.getBlockIdUnchecked(nlx, nly, nlz)
+                            neighborRenderedLight = chunk.getRenderedLightUnchecked(nlx, nly, nlz)
                         } else {
                             val neighborChunk = when (dir) {
                                 Direction.WEST -> nXNeg
@@ -232,7 +283,22 @@ class ChunkMesh(
                                 Direction.NORTH -> nZNeg
                                 Direction.SOUTH -> nZPos
                             }
-                            neighborChunk?.getBlockIdUnchecked(nlx and Chunk.MASK, nly and Chunk.MASK, nlz and Chunk.MASK) ?: airId
+                            if (neighborChunk != null) {
+                                val rlx = nlx and Chunk.MASK
+                                val rly = nly and Chunk.MASK
+                                val rlz = nlz and Chunk.MASK
+                                neighborId = neighborChunk.getBlockIdUnchecked(rlx, rly, rlz)
+                                neighborRenderedLight = neighborChunk.getRenderedLightUnchecked(rlx, rly, rlz)
+                            } else {
+                                neighborId = airId
+                                neighborRenderedLight = Chunk.MAX_LIGHT
+                            }
+                        }
+
+                        // Fast face-culling short-circuit for identical neighbor blocks (solid-solid or transparent-transparent)
+                        if (neighborId == blockId) {
+                            culledCount++
+                            continue
                         }
 
                         val neighbor = if (neighborId == airId) air else BlockType.fromId(neighborId)
@@ -241,6 +307,7 @@ class ChunkMesh(
                             continue
                         }
 
+                        val lightFactor = 0.28f + (neighborRenderedLight / 15f) * 0.72f
                         val textureId = block.getTextureForFace(dir)
                         val uv = texturePipeline.getAtlasUv(textureId)
 
@@ -252,7 +319,8 @@ class ChunkMesh(
                                 transVOffset,
                                 dir,
                                 fx, fy, fz,
-                                uv.uMin, uv.vMin, uv.uMax, uv.vMax
+                                uv.uMin, uv.vMin, uv.uMax, uv.vMax,
+                                lightFactor
                             )
                             transVOffset += 36
 
@@ -274,7 +342,8 @@ class ChunkMesh(
                                 opaqueVOffset,
                                 dir,
                                 fx, fy, fz,
-                                uv.uMin, uv.vMin, uv.uMax, uv.vMax
+                                uv.uMin, uv.vMin, uv.uMax, uv.vMax,
+                                lightFactor
                             )
                             opaqueVOffset += 36
 
@@ -327,13 +396,10 @@ class ChunkMesh(
 
     /**
      * Uploads pre-built CPU mesh buffers to OpenGL ES 3.0 VBO/EBOs on the GL thread.
+     * Lazily allocates GPU buffers only for passes with non-zero visible geometry and releases
+     * buffers for any pass that became empty.
      */
     fun uploadCpuMeshToGpu() {
-        if (opaqueIndexCount <= 0 && transparentIndexCount <= 0) {
-            hasPendingGpuUpload = false
-            return
-        }
-
         if (opaqueIndexCount > 0) {
             if (opaqueVaoId == 0) {
                 initOpaqueGl()
@@ -349,6 +415,8 @@ class ChunkMesh(
                     isTransparent = false
                 )
             }
+        } else if (hasOpaqueGpuBuffers) {
+            releaseOpaqueGl()
         }
 
         if (transparentIndexCount > 0) {
@@ -366,6 +434,8 @@ class ChunkMesh(
                     isTransparent = true
                 )
             }
+        } else if (hasTransparentGpuBuffers) {
+            releaseTransparentGl()
         }
 
         hasPendingGpuUpload = false
@@ -451,10 +521,11 @@ class ChunkMesh(
         offset: Int,
         dir: Direction,
         fx: Float, fy: Float, fz: Float,
-        uMin: Float, vMin: Float, uMax: Float, vMax: Float
+        uMin: Float, vMin: Float, uMax: Float, vMax: Float,
+        lightFactor: Float
     ) {
         var o = offset
-        val shade = dir.faceShade
+        val shade = dir.faceShade * lightFactor
         when (dir) {
             Direction.UP -> {
                 addVertex(target, o, fx, fy + 1f, fz + 1f, 0f, 1f, 0f, uMin, vMax, shade); o += 9
@@ -535,34 +606,13 @@ class ChunkMesh(
     }
 
     fun release() {
-        if (opaqueVaoId != 0) {
-            GLES30.glDeleteVertexArrays(1, intArrayOf(opaqueVaoId), 0)
-            opaqueVaoId = 0
-        }
-        if (opaqueVboId != 0 || opaqueEboId != 0) {
-            GLES30.glDeleteBuffers(2, intArrayOf(opaqueVboId, opaqueEboId), 0)
-            opaqueVboId = 0
-            opaqueEboId = 0
-        }
-
-        if (transparentVaoId != 0) {
-            GLES30.glDeleteVertexArrays(1, intArrayOf(transparentVaoId), 0)
-            transparentVaoId = 0
-        }
-        if (transparentVboId != 0 || transparentEboId != 0) {
-            GLES30.glDeleteBuffers(2, intArrayOf(transparentVboId, transparentEboId), 0)
-            transparentVboId = 0
-            transparentEboId = 0
-        }
+        releaseOpaqueGl()
+        releaseTransparentGl()
 
         opaqueIndexCount = 0
         transparentIndexCount = 0
         opaqueFacesCount = 0
         transparentFacesCount = 0
-        opaqueVertexBuffer = null
-        opaqueIndexBuffer = null
-        transparentVertexBuffer = null
-        transparentIndexBuffer = null
     }
 
     companion object {
