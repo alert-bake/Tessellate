@@ -376,7 +376,9 @@ object RegistryBootstrap {
             hardness = def.hardness,
             isTransparent = def.isTransparent,
             isSolid = def.isSolid,
-            isSimple = isSimple
+            isSimple = isSimple,
+            model = def.resolveModel(),
+            lightEmission = def.resolveLightEmission()
         )
     }
 

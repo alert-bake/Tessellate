@@ -125,6 +125,8 @@ class World private constructor(
     private val vaporizedChunks = HashSet<ChunkPos>()
 
     val lightEngine = LightEngine()
+    val lightQueue: LightEngine
+        get() = lightEngine
 
     private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var activeStreamJob: Job? = null
@@ -214,6 +216,37 @@ class World private constructor(
     }
 
     fun getBlock(pos: BlockPos): BlockType = getBlock(pos.x, pos.y, pos.z)
+
+    /**
+     * Returns the authoritative gameplay light (`-16..+16`) at `(wx, wy, wz)`.
+     */
+    fun getIntendedLight(wx: Int, wy: Int, wz: Int): Byte {
+        if (wy >= sizeY) return Chunk.MAX_LIGHT.toByte()
+        if (wy < 0) return Chunk.MIN_LIGHT.toByte()
+        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+            return Chunk.MAX_LIGHT.toByte()
+        }
+        val chunk = getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return Chunk.DEFAULT_AMBIENT_LIGHT.toByte()
+        return chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK).toByte()
+    }
+
+    /**
+     * Returns the authoritative gameplay light (`-16..+16`) at [pos].
+     */
+    fun getIntendedLight(pos: BlockPos): Byte = getIntendedLight(pos.x, pos.y, pos.z)
+
+    /**
+     * Returns the visual rendered light (`-16..+16`) at `(wx, wy, wz)`.
+     */
+    fun getRenderedLight(wx: Int, wy: Int, wz: Int): Byte {
+        if (wy >= sizeY) return Chunk.MAX_LIGHT.toByte()
+        if (wy < 0) return Chunk.MIN_LIGHT.toByte()
+        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+            return Chunk.MAX_LIGHT.toByte()
+        }
+        val chunk = getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return Chunk.DEFAULT_AMBIENT_LIGHT.toByte()
+        return chunk.getRenderedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK).toByte()
+    }
 
     fun setBlock(wx: Int, wy: Int, wz: Int, type: BlockType): Boolean {
         if (wy !in 0 until sizeY) return false

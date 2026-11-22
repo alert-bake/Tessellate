@@ -1,15 +1,19 @@
 package com.nitrous.tessellate.world
 
 /**
- * Time-sliced Lazyprop voxel light propagation engine (`lightIntended` vs `lightRendered`).
+ * Time-sliced Lazyprop voxel light propagation engine (`lightIntended` vs `lightRendered`)
+ * using the Starlight `fromDir` 5-neighbor BFS method on the signed `-16..+16` scale.
  *
- * Optimizations:
- * - **Zero-Allocation Ring Queues:** Coordinates `(wx, wy, wz)` and old light levels are stored
- *   in primitive `IntArray` circular buffers instead of allocating `BlockPos` nodes.
- * - **Time-Slicing:** Each frame [step] processes at most [maxNodesPerFrame] BFS nodes and
- *   respects [maxBudgetNs] so a full 15-block flood-fill spreads across multiple frames without hitching.
- * - **Dirty Chunk Tracking & Early Skip:** Only evaluates chunks flagged with [Chunk.needsLightUpdate],
- *   skipping chunks that are [Chunk.isCompletelyDark] or [Chunk.isCompletelyLit].
+ * Architecture & Optimizations:
+ * - **Signed Scale (`-16..+16`):** `-16` is absolute darkness, `0` ambient baseline, `+16` max skylight.
+ * - **Dual Light State:** `lightIntended` propagates synchronously during chunk generation and
+ *   localized block edits so gameplay/AI/entity lighting queries are immediately authoritative;
+ *   `lightRendered` updates incrementally via the time-sliced queue (`maxNodesPerFrame = 500`) and
+ *   marks affected chunks `needsMeshRebuild = true`.
+ * - **Starlight `fromDir` BFS:** Each queued node tracks its incoming direction and inspects only
+ *   the 5 outgoing neighbors (`d != fromDir`), reducing neighbor checks by ~16.7% and cutting
+ *   chunk-lookup lock contention via a local 4-entry chunk cache.
+ * - **Zero-Allocation Ring Queues:** Coordinates and incoming directions live in primitive arrays.
  */
 class LightEngine(
     var maxNodesPerFrame: Int = DEFAULT_MAX_NODES_PER_FRAME,
@@ -17,10 +21,11 @@ class LightEngine(
 ) {
     private val lightLock = Any()
 
-    // Primitive ring buffers for BFS addition (lightIntended propagation) & removal (darkening)
+    // Primitive ring buffers for time-sliced lightRendered BFS addition & removal waves
     private var addX = IntArray(INITIAL_QUEUE_CAPACITY)
     private var addY = IntArray(INITIAL_QUEUE_CAPACITY)
     private var addZ = IntArray(INITIAL_QUEUE_CAPACITY)
+    private var addFromDir = ByteArray(INITIAL_QUEUE_CAPACITY)
     private var addHead = 0
     private var addTail = 0
     private var addCount = 0
@@ -29,9 +34,33 @@ class LightEngine(
     private var remY = IntArray(INITIAL_QUEUE_CAPACITY)
     private var remZ = IntArray(INITIAL_QUEUE_CAPACITY)
     private var remLevel = IntArray(INITIAL_QUEUE_CAPACITY)
+    private var remFromDir = ByteArray(INITIAL_QUEUE_CAPACITY)
     private var remHead = 0
     private var remTail = 0
     private var remCount = 0
+
+    // Synchronous lightIntended scratch queues (guarded by lightLock)
+    private var syncAddX = IntArray(512)
+    private var syncAddY = IntArray(512)
+    private var syncAddZ = IntArray(512)
+    private var syncAddFromDir = ByteArray(512)
+
+    private var syncRemX = IntArray(512)
+    private var syncRemY = IntArray(512)
+    private var syncRemZ = IntArray(512)
+    private var syncRemLevel = IntArray(512)
+    private var syncRemFromDir = ByteArray(512)
+
+    private var reseedX = IntArray(256)
+    private var reseedY = IntArray(256)
+    private var reseedZ = IntArray(256)
+
+    // Reusable 4-slot chunk cache to eliminate repeated World.getChunk() chunkLock acquisitions inside BFS
+    private val cacheCx = IntArray(4)
+    private val cacheCy = IntArray(4)
+    private val cacheCz = IntArray(4)
+    private val cacheChunks = arrayOfNulls<Chunk>(4)
+    private var cacheCursor = 0
 
     private val dirtyChunks = ArrayList<Chunk>()
 
@@ -73,15 +102,41 @@ class LightEngine(
                 dirtyChunks[i].inLightQueue = false
             }
             dirtyChunks.clear()
+            invalidateChunkCache()
         }
     }
 
+    private fun invalidateChunkCache() {
+        for (i in 0 until 4) {
+            cacheChunks[i] = null
+        }
+    }
+
+    private fun getChunkCached(world: World, cx: Int, cy: Int, cz: Int): Chunk? {
+        if (cy !in 0 until world.chunksY) return null
+        for (i in 0 until 4) {
+            val c = cacheChunks[i]
+            if (c != null && cacheCx[i] == cx && cacheCy[i] == cy && cacheCz[i] == cz) {
+                return c
+            }
+        }
+        val fetched = world.getChunk(cx, cy, cz)
+        if (fetched != null) {
+            val slot = cacheCursor and 3
+            cacheCursor++
+            cacheCx[slot] = cx
+            cacheCy[slot] = cy
+            cacheCz[slot] = cz
+            cacheChunks[slot] = fetched
+        }
+        return fetched
+    }
+
     /**
-     * Initializes vertical direct skylight on a newly built or loaded [chunk].
-     * Empty sky chunks become [Chunk.isCompletelyLit] (`needsLightUpdate = false`),
-     * solid opaque chunks become [Chunk.isCompletelyDark] (`needsLightUpdate = false`),
-     * and mixed boundary chunks seed vertical sky columns cleanly while queuing horizontal
-     * light seams for time-sliced BFS.
+     * Synchronously computes vertical direct skylight (`+16`) and underground darkness (`-16`),
+     * seeds any emissive blocks (`lightEmission > 0`), and runs synchronous `lightIntended` Starlight BFS
+     * during chunk generation. Initializes `lightRendered` to match initial terrain lighting so new
+     * chunks render cleanly right away.
      */
     fun initializeChunkLighting(chunk: Chunk, world: World) {
         if (chunk.isEmpty) {
@@ -97,12 +152,19 @@ class LightEngine(
         }
 
         if (chunk.isSolidOpaque) {
-            chunk.markCompletelyDark()
-            return
+            var hasEmitter = false
+            for (i in 0 until Chunk.VOLUME) {
+                if (BlockType.fromId(chunk.blocks[i]).lightEmission > 0) {
+                    hasEmitter = true
+                    break
+                }
+            }
+            if (!hasEmitter) {
+                chunk.markCompletelyDark()
+                return
+            }
         }
 
-        // Mixed surface/cave chunk: seed direct sky light top-down cleanly without allocating
-        // per-block objects, and track whether any horizontal light gradients need BFS.
         var allDark = true
         var allLit = true
         val intended = ByteArray(Chunk.VOLUME)
@@ -114,49 +176,221 @@ class LightEngine(
             null
         }
 
+        val baseX = chunk.chunkX * Chunk.SIZE
+        val baseY = chunk.chunkY * Chunk.SIZE
+        val baseZ = chunk.chunkZ * Chunk.SIZE
+
+        // 1. Seed direct vertical skylight columns (+16 unobstructed, -16 beneath opaque) & emitters
+        val localQueue = IntArray(Chunk.VOLUME)
+        val localDir = ByteArray(Chunk.VOLUME)
+        var qHead = 0
+        var qTail = 0
+
         for (lz in 0 until Chunk.SIZE) {
             for (lx in 0 until Chunk.SIZE) {
-                var sky = if (above == null || above.isCompletelyLit) {
-                    MAX_LIGHT
+                var skyOpen = if (above == null || above.isCompletelyLit) {
+                    true
                 } else {
-                    above.getIntendedLightUnchecked(lx, 0, lz)
+                    above.getIntendedLightUnchecked(lx, 0, lz) >= MAX_LIGHT &&
+                        !above.getBlockUnchecked(lx, 0, lz).isOpaque
                 }
 
                 for (ly in Chunk.SIZE - 1 downTo 0) {
                     val block = chunk.getBlockUnchecked(lx, ly, lz)
-                    val level = if (block.isOpaque) {
-                        sky = 0
-                        0
-                    } else if (block.isTransparent) {
-                        sky = (sky - 1).coerceAtLeast(0)
-                        sky
+                    val emission = block.lightEmission.toInt()
+                    val level: Int
+                    if (block.isOpaque) {
+                        skyOpen = false
+                        level = if (emission > 0) emission.coerceIn(MIN_LIGHT, MAX_LIGHT) else MIN_LIGHT
+                    } else if (skyOpen) {
+                        level = maxOf(MAX_LIGHT, emission).coerceIn(MIN_LIGHT, MAX_LIGHT)
                     } else {
-                        sky
+                        level = if (emission > 0) emission.coerceIn(MIN_LIGHT, MAX_LIGHT) else MIN_LIGHT
                     }
 
                     val idx = (ly shl 8) or (lz shl 4) or lx
                     intended[idx] = level.toByte()
-                    rendered[idx] = level.toByte()
-                    if (level != 0) allDark = false
-                    if (level != MAX_LIGHT) allLit = false
+                    if (level > MIN_LIGHT) allDark = false
+                    if (level < MAX_LIGHT) allLit = false
+
+                    if (level > MIN_LIGHT + 1 && (!block.isOpaque || emission > 0)) {
+                        localQueue[qTail] = idx
+                        localDir[qTail] = DIR_NONE
+                        qTail++
+                    }
                 }
             }
         }
 
-        when {
-            allDark -> chunk.markCompletelyDark()
-            allLit -> chunk.markCompletelyLit()
-            else -> {
-                val (dstIntended, dstRendered) = chunk.ensureLightStorage()
-                System.arraycopy(intended, 0, dstIntended, 0, Chunk.VOLUME)
-                System.arraycopy(rendered, 0, dstRendered, 0, Chunk.VOLUME)
-                scheduleChunkLightUpdate(chunk)
+        // Also seed light entering horizontally/vertically from neighboring already-loaded chunks
+        val nWest = world.getChunk(chunk.chunkX - 1, chunk.chunkY, chunk.chunkZ)
+        val nEast = world.getChunk(chunk.chunkX + 1, chunk.chunkY, chunk.chunkZ)
+        val nBelow = if (chunk.chunkY > 0) world.getChunk(chunk.chunkX, chunk.chunkY - 1, chunk.chunkZ) else null
+        val nNorth = world.getChunk(chunk.chunkX, chunk.chunkY, chunk.chunkZ - 1)
+        val nSouth = world.getChunk(chunk.chunkX, chunk.chunkY, chunk.chunkZ + 1)
+
+        if (!allLit) {
+            for (a in 0 until Chunk.SIZE) {
+                for (b in 0 until Chunk.SIZE) {
+                    if (nWest != null) {
+                        val nl = nWest.getIntendedLightUnchecked(Chunk.MASK, a, b) - 1
+                        if (nl > MIN_LIGHT) {
+                            val nextTail = seedLocalIfBrighter(chunk, intended, localQueue, localDir, qTail, 0, a, b, nl, Direction.EAST.ordinal.toByte())
+                            if (nextTail > qTail) { qTail = nextTail; allDark = false }
+                        }
+                    }
+                    if (nEast != null) {
+                        val nl = nEast.getIntendedLightUnchecked(0, a, b) - 1
+                        if (nl > MIN_LIGHT) {
+                            val nextTail = seedLocalIfBrighter(chunk, intended, localQueue, localDir, qTail, Chunk.MASK, a, b, nl, Direction.WEST.ordinal.toByte())
+                            if (nextTail > qTail) { qTail = nextTail; allDark = false }
+                        }
+                    }
+                    if (nNorth != null) {
+                        val nl = nNorth.getIntendedLightUnchecked(b, a, Chunk.MASK) - 1
+                        if (nl > MIN_LIGHT) {
+                            val nextTail = seedLocalIfBrighter(chunk, intended, localQueue, localDir, qTail, b, a, 0, nl, Direction.SOUTH.ordinal.toByte())
+                            if (nextTail > qTail) { qTail = nextTail; allDark = false }
+                        }
+                    }
+                    if (nSouth != null) {
+                        val nl = nSouth.getIntendedLightUnchecked(b, a, 0) - 1
+                        if (nl > MIN_LIGHT) {
+                            val nextTail = seedLocalIfBrighter(chunk, intended, localQueue, localDir, qTail, b, a, Chunk.MASK, nl, Direction.NORTH.ordinal.toByte())
+                            if (nextTail > qTail) { qTail = nextTail; allDark = false }
+                        }
+                    }
+                    if (nBelow != null) {
+                        val nl = nBelow.getIntendedLightUnchecked(b, Chunk.MASK, a) - 1
+                        if (nl > MIN_LIGHT) {
+                            val nextTail = seedLocalIfBrighter(chunk, intended, localQueue, localDir, qTail, b, 0, a, nl, Direction.UP.ordinal.toByte())
+                            if (nextTail > qTail) { qTail = nextTail; allDark = false }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Synchronous Starlight 5-neighbor BFS within chunk for lightIntended
+        while (qHead < qTail) {
+            val idx = localQueue[qHead]
+            val fromDir = localDir[qHead]
+            qHead++
+
+            val lx = idx and 15
+            val lz = (idx shr 4) and 15
+            val ly = (idx shr 8) and 15
+            val level = intended[idx].toInt()
+            val nextLevel = level - 1
+            if (nextLevel <= MIN_LIGHT) continue
+
+            for (d in 0 until DIRECTIONS.size) {
+                if (d == fromDir.toInt()) continue
+                val dir = DIRECTIONS[d]
+                val nx = lx + dir.dx
+                val ny = ly + dir.dy
+                val nz = lz + dir.dz
+                if (((nx or ny or nz) and -16) == 0) {
+                    val nIdx = (ny shl 8) or (nz shl 4) or nx
+                    if (!chunk.getBlockUnchecked(nx, ny, nz).isOpaque && intended[nIdx].toInt() < nextLevel) {
+                        intended[nIdx] = nextLevel.toByte()
+                        allDark = false
+                        if (nextLevel > MIN_LIGHT + 1 && qTail < localQueue.size) {
+                            localQueue[qTail] = nIdx
+                            localDir[qTail] = OPPOSITE_ORDINAL[d]
+                            qTail++
+                        }
+                    }
+                }
+            }
+        }
+
+        if (allDark) {
+            chunk.markCompletelyDark()
+            return
+        }
+        if (allLit) {
+            chunk.markCompletelyLit()
+            return
+        }
+
+        System.arraycopy(intended, 0, rendered, 0, Chunk.VOLUME)
+        chunk.setLightArrays(intended, rendered)
+
+        // Queue horizontal border seams into adjacent chunks only where neighbor cells need brightening
+        synchronized(lightLock) {
+            for (ly in 0 until Chunk.SIZE) {
+                for (lz in 0 until Chunk.SIZE) {
+                    if (nWest != null && !nWest.isCompletelyLit) {
+                        val bLevel = intended[(ly shl 8) or (lz shl 4)].toInt()
+                        if (bLevel > MIN_LIGHT + 1 &&
+                            !nWest.getBlockUnchecked(Chunk.MASK, ly, lz).isOpaque &&
+                            nWest.getIntendedLightUnchecked(Chunk.MASK, ly, lz) < bLevel - 1
+                        ) {
+                            enqueueAddLocked(baseX, baseY + ly, baseZ + lz, DIR_NONE)
+                        }
+                    }
+                    if (nEast != null && !nEast.isCompletelyLit) {
+                        val bLevel = intended[(ly shl 8) or (lz shl 4) or Chunk.MASK].toInt()
+                        if (bLevel > MIN_LIGHT + 1 &&
+                            !nEast.getBlockUnchecked(0, ly, lz).isOpaque &&
+                            nEast.getIntendedLightUnchecked(0, ly, lz) < bLevel - 1
+                        ) {
+                            enqueueAddLocked(baseX + Chunk.MASK, baseY + ly, baseZ + lz, DIR_NONE)
+                        }
+                    }
+                }
+                for (lx in 0 until Chunk.SIZE) {
+                    if (nNorth != null && !nNorth.isCompletelyLit) {
+                        val bLevel = intended[(ly shl 8) or lx].toInt()
+                        if (bLevel > MIN_LIGHT + 1 &&
+                            !nNorth.getBlockUnchecked(lx, ly, Chunk.MASK).isOpaque &&
+                            nNorth.getIntendedLightUnchecked(lx, ly, Chunk.MASK) < bLevel - 1
+                        ) {
+                            enqueueAddLocked(baseX + lx, baseY + ly, baseZ, DIR_NONE)
+                        }
+                    }
+                    if (nSouth != null && !nSouth.isCompletelyLit) {
+                        val bLevel = intended[(ly shl 8) or (Chunk.MASK shl 4) or lx].toInt()
+                        if (bLevel > MIN_LIGHT + 1 &&
+                            !nSouth.getBlockUnchecked(lx, ly, 0).isOpaque &&
+                            nSouth.getIntendedLightUnchecked(lx, ly, 0) < bLevel - 1
+                        ) {
+                            enqueueAddLocked(baseX + lx, baseY + ly, baseZ + Chunk.MASK, DIR_NONE)
+                        }
+                    }
+                }
             }
         }
     }
 
+    private fun seedLocalIfBrighter(
+        chunk: Chunk,
+        intended: ByteArray,
+        q: IntArray,
+        dirs: ByteArray,
+        qTail: Int,
+        lx: Int,
+        ly: Int,
+        lz: Int,
+        newLevel: Int,
+        fromDir: Byte
+    ): Int {
+        if (chunk.getBlockUnchecked(lx, ly, lz).isOpaque) return qTail
+        val idx = (ly shl 8) or (lz shl 4) or lx
+        if (intended[idx].toInt() < newLevel) {
+            intended[idx] = newLevel.toByte()
+            if (newLevel > MIN_LIGHT + 1 && qTail < q.size) {
+                q[qTail] = idx
+                dirs[qTail] = fromDir
+                return qTail + 1
+            }
+        }
+        return qTail
+    }
+
     /**
-     * Marks [chunk] dirty for lighting and queues it for [step] unless already completely dark/lit.
+     * Marks [chunk] dirty for lighting and queues it for [step] unless already uniformly dark/lit.
      */
     fun scheduleChunkLightUpdate(chunk: Chunk) {
         if (chunk.isCompletelyDark || chunk.isCompletelyLit) {
@@ -173,9 +407,12 @@ class LightEngine(
     }
 
     /**
-     * Schedules a Lazyprop update when a block transitions from [oldBlock] to [newBlock] at `(wx, wy, wz)`.
+     * Updates `lightIntended` synchronously using Starlight `fromDir` BFS and queues the matching
+     * visual `lightRendered` update into the time-sliced queue (`maxNodesPerFrame = 500`) whenever
+     * a block transitions from [oldBlock] to [newBlock] at `(wx, wy, wz)`.
      */
     fun onBlockChanged(world: World, wx: Int, wy: Int, wz: Int, oldBlock: BlockType, newBlock: BlockType) {
+        if (wy !in 0 until world.sizeY) return
         val cx = wx shr 4
         val cy = wy shr 4
         val cz = wz shr 4
@@ -185,67 +422,120 @@ class LightEngine(
         val ly = wy and Chunk.MASK
         val lz = wz and Chunk.MASK
 
-        val oldLight = chunk.getIntendedLightUnchecked(lx, ly, lz)
-        if (newBlock.isOpaque) {
-            // Solid block placed: clear light here and start darkening wave + neighbor re-seed
-            chunk.setIntendedLight(lx, ly, lz, 0)
-            chunk.setRenderedLight(lx, ly, lz, 0)
-            if (oldLight > 0) {
-                synchronized(lightLock) {
-                    enqueueRemoveLocked(wx, wy, wz, oldLight)
+        val oldIntended = chunk.getIntendedLightUnchecked(lx, ly, lz)
+        val oldRendered = chunk.getRenderedLightUnchecked(lx, ly, lz)
+
+        synchronized(lightLock) {
+            invalidateChunkCache()
+
+            val newEmission = newBlock.lightEmission.toInt().coerceIn(0, MAX_LIGHT)
+            val skyOpenHere = !newBlock.isOpaque && hasDirectSkyAbove(world, wx, wy, wz)
+
+            if (newBlock.isOpaque) {
+                val targetLevel = if (newEmission > 0) newEmission else MIN_LIGHT
+                chunk.ensureLightStorage()
+                chunk.setIntendedLight(lx, ly, lz, targetLevel)
+
+                if (oldIntended > targetLevel) {
+                    // Remove light at this voxel and any obstructed skylight column directly underneath
+                    propagateIntendedRemovalLocked(world, wx, wy, wz, oldIntended, checkSkyColumnBelow = (oldIntended == MAX_LIGHT))
+                    enqueueRemoveLocked(wx, wy, wz, oldRendered, DIR_NONE)
+                    // Clear direct skylight beam below for rendered wave as well
+                    if (oldRendered == MAX_LIGHT) {
+                        var yDown = wy - 1
+                        while (yDown >= 0) {
+                            val belowChunk = getChunkCached(world, wx shr 4, yDown shr 4, wz shr 4) ?: break
+                            val bly = yDown and Chunk.MASK
+                            if (belowChunk.getBlockUnchecked(lx, bly, lz).isOpaque) break
+                            val belowRend = belowChunk.getRenderedLightUnchecked(lx, bly, lz)
+                            if (belowRend < MAX_LIGHT) break
+                            enqueueRemoveLocked(wx, yDown, wz, MAX_LIGHT, DIR_NONE)
+                            yDown--
+                        }
+                    }
+                }
+                if (newEmission > 0) {
+                    propagateIntendedAdditionLocked(world, wx, wy, wz, DIR_NONE)
+                    enqueueAddLocked(wx, wy, wz, DIR_NONE)
+                }
+                chunk.needsLightUpdate = true
+                markLightBoundaryChunks(world, cx, cy, cz, lx, ly, lz)
+                return
+            }
+
+            // Non-opaque block (Air, Glass, Torch, etc.)
+            val targetBase = when {
+                skyOpenHere -> maxOf(MAX_LIGHT, newEmission)
+                newEmission > 0 -> newEmission
+                else -> MIN_LIGHT
+            }
+
+            if (oldBlock.lightEmission > 0 && newEmission < oldIntended) {
+                // Light emitter removed (e.g., Torch broken): invalidate contribution first, then re-propagate surviving sources
+                chunk.ensureLightStorage()
+                chunk.setIntendedLight(lx, ly, lz, targetBase)
+                propagateIntendedRemovalLocked(world, wx, wy, wz, oldIntended, checkSkyColumnBelow = false)
+                if (targetBase > MIN_LIGHT) {
+                    propagateIntendedAdditionLocked(world, wx, wy, wz, DIR_NONE)
+                }
+                // Re-pull from immediate neighbors in case another source illuminates (wx, wy, wz)
+                pullFromNeighborsIntoIntendedLocked(world, wx, wy, wz)
+
+                enqueueRemoveLocked(wx, wy, wz, oldRendered, DIR_NONE)
+                chunk.needsLightUpdate = true
+                markLightBoundaryChunks(world, cx, cy, cz, lx, ly, lz)
+                return
+            }
+
+            // Air/transparent block opened or torch placed
+            chunk.ensureLightStorage()
+            var bestIntended = targetBase
+            for (d in 0 until DIRECTIONS.size) {
+                val dir = DIRECTIONS[d]
+                val nLight = getIntendedLightGlobal(world, wx + dir.dx, wy + dir.dy, wz + dir.dz)
+                if (nLight - 1 > bestIntended) {
+                    bestIntended = nLight - 1
                 }
             }
-            chunk.needsLightUpdate = true
-            scheduleChunkLightUpdate(chunk)
-        } else {
-            // Transparent / Air block placed (or block broken): pull incoming light from neighbors & sky
-            var bestIncoming = 0
-            // Vertical sky check directly above
-            val aboveLight = getIntendedLightGlobal(world, wx, wy + 1, wz)
-            if (wy == world.sizeY - 1 || aboveLight == MAX_LIGHT) {
-                bestIncoming = if (newBlock.isTransparent) MAX_LIGHT - 1 else MAX_LIGHT
-            } else {
-                bestIncoming = (aboveLight - (if (newBlock.isTransparent) 1 else 1)).coerceAtLeast(0)
+            bestIntended = bestIntended.coerceIn(MIN_LIGHT, MAX_LIGHT)
+
+            if (bestIntended > oldIntended) {
+                chunk.setIntendedLight(lx, ly, lz, bestIntended)
+                propagateIntendedAdditionLocked(world, wx, wy, wz, DIR_NONE)
+                enqueueAddLocked(wx, wy, wz, DIR_NONE)
+
+                // If opening an opaque block uncovered direct skylight above an air column below, illuminate the column down
+                if (skyOpenHere) {
+                    var yDown = wy - 1
+                    while (yDown >= 0) {
+                        val bChunk = getChunkCached(world, wx shr 4, yDown shr 4, wz shr 4) ?: break
+                        val bly = yDown and Chunk.MASK
+                        if (bChunk.getBlockUnchecked(lx, bly, lz).isOpaque) break
+                        if (bChunk.getIntendedLightUnchecked(lx, bly, lz) < MAX_LIGHT) {
+                            bChunk.ensureLightStorage()
+                            bChunk.setIntendedLight(lx, bly, lz, MAX_LIGHT)
+                            propagateIntendedAdditionLocked(world, wx, yDown, wz, DIR_NONE)
+                            enqueueAddLocked(wx, yDown, wz, DIR_NONE)
+                        }
+                        yDown--
+                    }
+                }
+            } else if (bestIntended < oldIntended) {
+                chunk.setIntendedLight(lx, ly, lz, bestIntended)
+                propagateIntendedRemovalLocked(world, wx, wy, wz, oldIntended, checkSkyColumnBelow = false)
+                enqueueRemoveLocked(wx, wy, wz, oldRendered, DIR_NONE)
+            } else if (bestIntended > oldRendered) {
+                enqueueAddLocked(wx, wy, wz, DIR_NONE)
             }
 
-            val belowLight = getIntendedLightGlobal(world, wx, wy - 1, wz)
-            val westLight = getIntendedLightGlobal(world, wx - 1, wy, wz)
-            val eastLight = getIntendedLightGlobal(world, wx + 1, wy, wz)
-            val northLight = getIntendedLightGlobal(world, wx, wy, wz - 1)
-            val southLight = getIntendedLightGlobal(world, wx, wy, wz + 1)
-
-            val attenuation = if (newBlock.isTransparent) 2 else 1
-            bestIncoming = maxOf(
-                bestIncoming,
-                belowLight - attenuation,
-                westLight - attenuation,
-                eastLight - attenuation,
-                northLight - attenuation,
-                southLight - attenuation,
-                0
-            )
-
-            chunk.ensureLightStorage()
-            chunk.setIntendedLight(lx, ly, lz, bestIncoming)
             chunk.needsLightUpdate = true
-            synchronized(lightLock) {
-                enqueueAddLocked(wx, wy, wz)
-            }
-            scheduleChunkLightUpdate(chunk)
+            markLightBoundaryChunks(world, cx, cy, cz, lx, ly, lz)
         }
-
-        // Mark adjacent boundary chunks dirty if on chunk border
-        if (lx == 0) world.getChunk(cx - 1, cy, cz)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
-        if (lx == Chunk.MASK) world.getChunk(cx + 1, cy, cz)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
-        if (ly == 0 && cy > 0) world.getChunk(cx, cy - 1, cz)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
-        if (ly == Chunk.MASK && cy < world.chunksY - 1) world.getChunk(cx, cy + 1, cz)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
-        if (lz == 0) world.getChunk(cx, cy, cz - 1)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
-        if (lz == Chunk.MASK) world.getChunk(cx, cy, cz + 1)?.let { if (!it.isCompletelyDark) scheduleChunkLightUpdate(it) }
     }
 
     /**
-     * Manually seeds a light source or level at `(wx, wy, wz)` and enqueues it for time-sliced BFS.
-     * Useful for emissive blocks/mods and verifying time-sliced 15-block propagation.
+     * Seeds a light source level at `(wx, wy, wz)` in `lightIntended` and enqueues it for
+     * time-sliced `lightRendered` propagation via [step].
      */
     fun seedLight(world: World, wx: Int, wy: Int, wz: Int, level: Int) {
         if (wy !in 0 until world.sizeY) return
@@ -253,29 +543,38 @@ class LightEngine(
         val lx = wx and Chunk.MASK
         val ly = wy and Chunk.MASK
         val lz = wz and Chunk.MASK
+        val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT)
         chunk.ensureLightStorage()
-        chunk.setIntendedLight(lx, ly, lz, level.coerceIn(0, MAX_LIGHT))
+        chunk.setIntendedLight(lx, ly, lz, clamped)
         chunk.needsLightUpdate = true
         synchronized(lightLock) {
-            enqueueAddLocked(wx, wy, wz)
+            enqueueAddLocked(wx, wy, wz, DIR_NONE)
         }
     }
 
     /**
-     * Runs one time-sliced Lazyprop update pass across dirty chunks and queued BFS nodes.
-     * Returns the number of BFS nodes processed during this frame.
+     * Runs one time-sliced Lazyprop `lightRendered` update pass across dirty chunks and queued
+     * Starlight `fromDir` BFS nodes (up to [maxNodes] updates per tick, default 500).
      */
     fun step(
         world: World,
         maxNodes: Int = maxNodesPerFrame,
         budgetNs: Long = maxBudgetNs
     ): Int {
-        val startNs = System.nanoTime()
-        var nodesProcessed = 0
-        var skippedChunks = 0
-
-        // 1. Seed perimeter/interior light discrepancies for chunks flagged needsLightUpdate
         synchronized(lightLock) {
+            if (remCount == 0 && addCount == 0 && dirtyChunks.isEmpty()) {
+                lastStepNodesProcessed = 0
+                lastStepSkippedChunks = 0
+                totalStepsExecuted++
+                return 0
+            }
+
+            val startNs = System.nanoTime()
+            var nodesProcessed = 0
+            var skippedChunks = 0
+            invalidateChunkCache()
+
+            // 1. Seed any perimeter discrepancies on chunks explicitly flagged dirty
             var i = dirtyChunks.size - 1
             while (i >= 0 && nodesProcessed < maxNodes && (System.nanoTime() - startNs) < budgetNs) {
                 val chunk = dirtyChunks.removeAt(i)
@@ -288,207 +587,434 @@ class LightEngine(
                     continue
                 }
 
-                seedDirtyChunkBoundaryLocked(chunk, world)
+                seedDirtyChunkBoundaryLocked(chunk)
                 chunk.needsLightUpdate = false
             }
-        }
 
-        // 2. Process darkening/removal BFS wave (time-sliced)
-        while (nodesProcessed < maxNodes) {
-            if (nodesProcessed > 0 && (System.nanoTime() - startNs) >= budgetNs) break
+            // 2. Process darkening/removal Starlight BFS wave on lightRendered (time-sliced)
+            while (nodesProcessed < maxNodes && remCount > 0) {
+                if (nodesProcessed > 0 && (System.nanoTime() - startNs) >= budgetNs) break
 
-            val wx: Int
-            val wy: Int
-            val wz: Int
-            val oldLevel: Int
-            synchronized(lightLock) {
-                if (remCount == 0) break
-                wx = remX[remHead]
-                wy = remY[remHead]
-                wz = remZ[remHead]
-                oldLevel = remLevel[remHead]
+                val wx = remX[remHead]
+                val wy = remY[remHead]
+                val wz = remZ[remHead]
+                val oldLevel = remLevel[remHead]
+                val fromDir = remFromDir[remHead]
                 remHead = (remHead + 1) % remX.size
                 remCount--
+
+                processRemoveNodeLocked(world, wx, wy, wz, oldLevel, fromDir)
+                nodesProcessed++
             }
 
-            processRemoveNode(world, wx, wy, wz, oldLevel)
-            nodesProcessed++
-        }
+            // 3. Process brightening/sync Starlight BFS wave on lightRendered (time-sliced)
+            while (nodesProcessed < maxNodes && addCount > 0) {
+                if (nodesProcessed > 0 && (System.nanoTime() - startNs) >= budgetNs) break
 
-        // 3. Process Lazyprop add/sync BFS wave (time-sliced)
-        while (nodesProcessed < maxNodes) {
-            if (nodesProcessed > 0 && (System.nanoTime() - startNs) >= budgetNs) break
-
-            val wx: Int
-            val wy: Int
-            val wz: Int
-            synchronized(lightLock) {
-                if (addCount == 0) break
-                wx = addX[addHead]
-                wy = addY[addHead]
-                wz = addZ[addHead]
+                val wx = addX[addHead]
+                val wy = addY[addHead]
+                val wz = addZ[addHead]
+                val fromDir = addFromDir[addHead]
                 addHead = (addHead + 1) % addX.size
                 addCount--
+
+                processAddNodeLocked(world, wx, wy, wz, fromDir)
+                nodesProcessed++
             }
 
-            processAddNode(world, wx, wy, wz)
-            nodesProcessed++
+            lastStepNodesProcessed = nodesProcessed
+            lastStepSkippedChunks = skippedChunks
+            totalNodesProcessed += nodesProcessed
+            totalStepsExecuted++
+            return nodesProcessed
         }
-
-        lastStepNodesProcessed = nodesProcessed
-        lastStepSkippedChunks = skippedChunks
-        totalNodesProcessed += nodesProcessed
-        totalStepsExecuted++
-        return nodesProcessed
     }
 
-    private fun seedDirtyChunkBoundaryLocked(chunk: Chunk, world: World) {
-        val baseX = chunk.chunkX * Chunk.SIZE
-        val baseY = chunk.chunkY * Chunk.SIZE
-        val baseZ = chunk.chunkZ * Chunk.SIZE
+    // =========================================================================
+    // Synchronous Starlight BFS Helpers for lightIntended
+    // =========================================================================
 
-        // Seed only boundary faces + bright interior air pockets that differ from neighbors
-        for (ly in 0 until Chunk.SIZE) {
-            for (lz in 0 until Chunk.SIZE) {
-                for (lx in 0 until Chunk.SIZE) {
-                    val isEdge = lx == 0 || lx == Chunk.MASK || ly == 0 || ly == Chunk.MASK || lz == 0 || lz == Chunk.MASK
-                    if (!isEdge) continue
-                    val light = chunk.getIntendedLightUnchecked(lx, ly, lz)
-                    if (light > 1 && !chunk.getBlockUnchecked(lx, ly, lz).isOpaque) {
-                        enqueueAddLocked(baseX + lx, baseY + ly, baseZ + lz)
+    private fun propagateIntendedAdditionLocked(world: World, startX: Int, startY: Int, startZ: Int, startFromDir: Byte) {
+        var head = 0
+        var tail = 0
+        syncAddX[tail] = startX
+        syncAddY[tail] = startY
+        syncAddZ[tail] = startZ
+        syncAddFromDir[tail] = startFromDir
+        tail++
+
+        while (head < tail) {
+            val wx = syncAddX[head]
+            val wy = syncAddY[head]
+            val wz = syncAddZ[head]
+            val fromDir = syncAddFromDir[head]
+            head++
+
+            val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: continue
+            val level = chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK)
+            val nextLevel = level - 1
+            if (nextLevel <= MIN_LIGHT) continue
+
+            for (d in 0 until DIRECTIONS.size) {
+                if (d == fromDir.toInt()) continue
+                val dir = DIRECTIONS[d]
+                val nx = wx + dir.dx
+                val ny = wy + dir.dy
+                val nz = wz + dir.dz
+                if (ny !in 0 until world.sizeY) continue
+                val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
+                val nlx = nx and Chunk.MASK
+                val nly = ny and Chunk.MASK
+                val nlz = nz and Chunk.MASK
+
+                val neighborBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
+                if (neighborBlock.isOpaque) continue
+
+                if (nChunk.getIntendedLightUnchecked(nlx, nly, nlz) < nextLevel) {
+                    nChunk.ensureLightStorage()
+                    nChunk.setIntendedLight(nlx, nly, nlz, nextLevel)
+                    if (nextLevel > MIN_LIGHT + 1) {
+                        if (tail == syncAddX.size) growSyncAdd()
+                        syncAddX[tail] = nx
+                        syncAddY[tail] = ny
+                        syncAddZ[tail] = nz
+                        syncAddFromDir[tail] = OPPOSITE_ORDINAL[d]
+                        tail++
                     }
                 }
             }
         }
     }
 
-    private fun processRemoveNode(world: World, wx: Int, wy: Int, wz: Int, oldLevel: Int) {
-        val cx = wx shr 4
-        val cy = wy shr 4
-        val cz = wz shr 4
-        val chunk = world.getChunk(cx, cy, cz) ?: return
-        chunk.setRenderedLight(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK, 0)
+    private fun propagateIntendedRemovalLocked(
+        world: World,
+        startX: Int,
+        startY: Int,
+        startZ: Int,
+        startOldLevel: Int,
+        checkSkyColumnBelow: Boolean
+    ) {
+        var rHead = 0
+        var rTail = 0
+        var reseedCount = 0
 
+        syncRemX[rTail] = startX
+        syncRemY[rTail] = startY
+        syncRemZ[rTail] = startZ
+        syncRemLevel[rTail] = startOldLevel
+        syncRemFromDir[rTail] = DIR_NONE
+        rTail++
+
+        if (checkSkyColumnBelow) {
+            var yDown = startY - 1
+            val lx = startX and Chunk.MASK
+            val lz = startZ and Chunk.MASK
+            while (yDown >= 0) {
+                val bChunk = getChunkCached(world, startX shr 4, yDown shr 4, startZ shr 4) ?: break
+                val bly = yDown and Chunk.MASK
+                val bBlock = bChunk.getBlockUnchecked(lx, bly, lz)
+                if (bBlock.isOpaque) break
+                val cur = bChunk.getIntendedLightUnchecked(lx, bly, lz)
+                if (cur < MAX_LIGHT) break
+                val resetVal = bBlock.lightEmission.toInt().let { if (it > 0) it else MIN_LIGHT }
+                bChunk.ensureLightStorage()
+                bChunk.setIntendedLight(lx, bly, lz, resetVal)
+                if (rTail == syncRemX.size) growSyncRem()
+                syncRemX[rTail] = startX
+                syncRemY[rTail] = yDown
+                syncRemZ[rTail] = startZ
+                syncRemLevel[rTail] = MAX_LIGHT
+                syncRemFromDir[rTail] = DIR_NONE
+                rTail++
+                if (bBlock.lightEmission > 0) {
+                    if (reseedCount == reseedX.size) growReseed()
+                    reseedX[reseedCount] = startX
+                    reseedY[reseedCount] = yDown
+                    reseedZ[reseedCount] = startZ
+                    reseedCount++
+                }
+                yDown--
+            }
+        }
+
+        while (rHead < rTail) {
+            val wx = syncRemX[rHead]
+            val wy = syncRemY[rHead]
+            val wz = syncRemZ[rHead]
+            val oldLevel = syncRemLevel[rHead]
+            val fromDir = syncRemFromDir[rHead]
+            rHead++
+
+            for (d in 0 until DIRECTIONS.size) {
+                if (d == fromDir.toInt()) continue
+                val dir = DIRECTIONS[d]
+                val nx = wx + dir.dx
+                val ny = wy + dir.dy
+                val nz = wz + dir.dz
+                if (ny !in 0 until world.sizeY) continue
+                val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
+                val nlx = nx and Chunk.MASK
+                val nly = ny and Chunk.MASK
+                val nlz = nz and Chunk.MASK
+
+                val nBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
+                val neighborLight = nChunk.getIntendedLightUnchecked(nlx, nly, nlz)
+                if (neighborLight <= MIN_LIGHT) continue
+
+                val emission = nBlock.lightEmission.toInt()
+                val isDirectSky = !nBlock.isOpaque && neighborLight == MAX_LIGHT && hasDirectSkyAbove(world, nx, ny, nz)
+
+                if (emission > 0 || isDirectSky || neighborLight >= oldLevel) {
+                    // Surviving independent light source -> reseed after invalidation finishes
+                    if (reseedCount == reseedX.size) growReseed()
+                    reseedX[reseedCount] = nx
+                    reseedY[reseedCount] = ny
+                    reseedZ[reseedCount] = nz
+                    reseedCount++
+                } else if (!nBlock.isOpaque) {
+                    nChunk.ensureLightStorage()
+                    nChunk.setIntendedLight(nlx, nly, nlz, MIN_LIGHT)
+                    if (rTail == syncRemX.size) growSyncRem()
+                    syncRemX[rTail] = nx
+                    syncRemY[rTail] = ny
+                    syncRemZ[rTail] = nz
+                    syncRemLevel[rTail] = neighborLight
+                    syncRemFromDir[rTail] = OPPOSITE_ORDINAL[d]
+                    rTail++
+                }
+            }
+        }
+
+        // Re-propagate from all surviving fringe sources
+        for (i in 0 until reseedCount) {
+            val rx = reseedX[i]
+            val ry = reseedY[i]
+            val rz = reseedZ[i]
+            val rChunk = getChunkCached(world, rx shr 4, ry shr 4, rz shr 4) ?: continue
+            val rlx = rx and Chunk.MASK
+            val rly = ry and Chunk.MASK
+            val rlz = rz and Chunk.MASK
+            val rBlock = rChunk.getBlockUnchecked(rlx, rly, rlz)
+            val emission = rBlock.lightEmission.toInt()
+            if (emission > 0 && rChunk.getIntendedLightUnchecked(rlx, rly, rlz) < emission) {
+                rChunk.setIntendedLight(rlx, rly, rlz, emission)
+            }
+            propagateIntendedAdditionLocked(world, rx, ry, rz, DIR_NONE)
+        }
+    }
+
+    private fun pullFromNeighborsIntoIntendedLocked(world: World, wx: Int, wy: Int, wz: Int) {
+        val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
+        val lx = wx and Chunk.MASK
+        val ly = wy and Chunk.MASK
+        val lz = wz and Chunk.MASK
+        var best = chunk.getIntendedLightUnchecked(lx, ly, lz)
         for (d in 0 until DIRECTIONS.size) {
             val dir = DIRECTIONS[d]
-            val nx = wx + dir.dx
-            val ny = wy + dir.dy
-            val nz = wz + dir.dz
-            if (ny !in 0 until world.sizeY) continue
-            val nChunk = world.getChunk(nx shr 4, ny shr 4, nz shr 4) ?: continue
-            val nlx = nx and Chunk.MASK
-            val nly = ny and Chunk.MASK
-            val nlz = nz and Chunk.MASK
-            val neighborLight = nChunk.getIntendedLightUnchecked(nlx, nly, nlz)
-            if (neighborLight != 0 && neighborLight < oldLevel) {
-                nChunk.setIntendedLight(nlx, nly, nlz, 0)
-                nChunk.setRenderedLight(nlx, nly, nlz, 0)
-                synchronized(lightLock) {
-                    enqueueRemoveLocked(nx, ny, nz, neighborLight)
-                }
-            } else if (neighborLight >= oldLevel) {
-                synchronized(lightLock) {
-                    enqueueAddLocked(nx, ny, nz)
+            val nLight = getIntendedLightGlobal(world, wx + dir.dx, wy + dir.dy, wz + dir.dz)
+            if (nLight - 1 > best) {
+                best = nLight - 1
+            }
+        }
+        if (best > chunk.getIntendedLightUnchecked(lx, ly, lz)) {
+            chunk.setIntendedLight(lx, ly, lz, best)
+            propagateIntendedAdditionLocked(world, wx, wy, wz, DIR_NONE)
+        }
+    }
+
+    private fun hasDirectSkyAbove(world: World, wx: Int, wy: Int, wz: Int): Boolean {
+        val aboveY = wy + 1
+        if (aboveY >= world.sizeY) return true
+        val aboveChunk = getChunkCached(world, wx shr 4, aboveY shr 4, wz shr 4) ?: return true
+        val lx = wx and Chunk.MASK
+        val ly = aboveY and Chunk.MASK
+        val lz = wz and Chunk.MASK
+        return !aboveChunk.getBlockUnchecked(lx, ly, lz).isOpaque &&
+            aboveChunk.getIntendedLightUnchecked(lx, ly, lz) >= MAX_LIGHT
+    }
+
+    // =========================================================================
+    // Time-Sliced Starlight BFS Helpers for lightRendered
+    // =========================================================================
+
+    private fun seedDirtyChunkBoundaryLocked(chunk: Chunk) {
+        val baseX = chunk.chunkX * Chunk.SIZE
+        val baseY = chunk.chunkY * Chunk.SIZE
+        val baseZ = chunk.chunkZ * Chunk.SIZE
+
+        for (ly in 0 until Chunk.SIZE) {
+            for (lz in 0 until Chunk.SIZE) {
+                for (lx in 0 until Chunk.SIZE) {
+                    val isEdge = lx == 0 || lx == Chunk.MASK || ly == 0 || ly == Chunk.MASK || lz == 0 || lz == Chunk.MASK
+                    if (!isEdge) continue
+                    val intended = chunk.getIntendedLightUnchecked(lx, ly, lz)
+                    val rendered = chunk.getRenderedLightUnchecked(lx, ly, lz)
+                    if (intended != rendered) {
+                        if (intended > rendered) {
+                            enqueueAddLocked(baseX + lx, baseY + ly, baseZ + lz, DIR_NONE)
+                        } else {
+                            enqueueRemoveLocked(baseX + lx, baseY + ly, baseZ + lz, rendered, DIR_NONE)
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun processAddNode(world: World, wx: Int, wy: Int, wz: Int) {
+    private fun processRemoveNodeLocked(world: World, wx: Int, wy: Int, wz: Int, oldLevel: Int, fromDir: Byte) {
         if (wy !in 0 until world.sizeY) return
-        val cx = wx shr 4
-        val cy = wy shr 4
-        val cz = wz shr 4
-        val chunk = world.getChunk(cx, cy, cz) ?: return
+        val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
+        val lx = wx and Chunk.MASK
+        val ly = wy and Chunk.MASK
+        val lz = wz and Chunk.MASK
+
+        val intendedHere = chunk.getIntendedLightUnchecked(lx, ly, lz)
+        val blockHere = chunk.getBlockUnchecked(lx, ly, lz)
+        chunk.setRenderedLight(lx, ly, lz, if (blockHere.isOpaque) intendedHere else MIN_LIGHT)
+        if (!blockHere.isOpaque && blockHere.lightEmission > 0) {
+            enqueueAddLocked(wx, wy, wz, DIR_NONE)
+        }
+
+        for (d in 0 until DIRECTIONS.size) {
+            if (d == fromDir.toInt()) continue
+            val dir = DIRECTIONS[d]
+            val nx = wx + dir.dx
+            val ny = wy + dir.dy
+            val nz = wz + dir.dz
+            if (ny !in 0 until world.sizeY) continue
+            val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
+            val nlx = nx and Chunk.MASK
+            val nly = ny and Chunk.MASK
+            val nlz = nz and Chunk.MASK
+
+            val nBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
+            val neighborRendered = nChunk.getRenderedLightUnchecked(nlx, nly, nlz)
+
+            if (neighborRendered > MIN_LIGHT && neighborRendered < oldLevel && nBlock.lightEmission <= 0) {
+                nChunk.setRenderedLight(nlx, nly, nlz, MIN_LIGHT)
+                enqueueRemoveLocked(nx, ny, nz, neighborRendered, OPPOSITE_ORDINAL[d])
+            } else if (neighborRendered >= oldLevel || nBlock.lightEmission > 0) {
+                enqueueAddLocked(nx, ny, nz, DIR_NONE)
+            }
+        }
+    }
+
+    private fun processAddNodeLocked(world: World, wx: Int, wy: Int, wz: Int, fromDir: Byte) {
+        if (wy !in 0 until world.sizeY) return
+        val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
         val lx = wx and Chunk.MASK
         val ly = wy and Chunk.MASK
         val lz = wz and Chunk.MASK
 
         val intended = chunk.getIntendedLightUnchecked(lx, ly, lz)
-        // Synchronize rendered light lazily to match intended light as BFS advances
+        if (fromDir != DIR_NONE && chunk.getRenderedLightUnchecked(lx, ly, lz) > intended) return
         chunk.setRenderedLight(lx, ly, lz, intended)
-        if (intended <= 1) return
+
+        val nextWaveLevel = intended - 1
+        if (nextWaveLevel <= MIN_LIGHT) return
 
         for (d in 0 until DIRECTIONS.size) {
+            if (d == fromDir.toInt()) continue
             val dir = DIRECTIONS[d]
             val nx = wx + dir.dx
             val ny = wy + dir.dy
             val nz = wz + dir.dz
             if (ny !in 0 until world.sizeY) continue
-            val nChunk = world.getChunk(nx shr 4, ny shr 4, nz shr 4) ?: continue
+            val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
             val nlx = nx and Chunk.MASK
             val nly = ny and Chunk.MASK
             val nlz = nz and Chunk.MASK
 
             val neighborBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
-            if (neighborBlock.isOpaque) continue
-
-            val attenuation = if (neighborBlock.isTransparent) 2 else 1
-            val nextLevel = intended - attenuation
-            if (nextLevel <= 0) continue
+            if (neighborBlock.isOpaque && neighborBlock.lightEmission <= 0) continue
 
             val neighborIntended = nChunk.getIntendedLightUnchecked(nlx, nly, nlz)
-            if (neighborIntended < nextLevel) {
-                nChunk.setIntendedLight(nlx, nly, nlz, nextLevel)
+            val targetIntended = if (neighborIntended < nextWaveLevel) {
+                nChunk.ensureLightStorage()
+                nChunk.setIntendedLight(nlx, nly, nlz, nextWaveLevel)
+                nextWaveLevel
+            } else {
+                neighborIntended
+            }
+
+            val neighborRendered = nChunk.getRenderedLightUnchecked(nlx, nly, nlz)
+            if (neighborRendered < targetIntended && targetIntended > MIN_LIGHT) {
+                // Claim rendered light on enqueue to prevent combinatorial queue duplication
+                nChunk.ensureLightStorage()
+                nChunk.setRenderedLight(nlx, nly, nlz, targetIntended)
                 nChunk.needsLightUpdate = true
-                synchronized(lightLock) {
-                    enqueueAddLocked(nx, ny, nz)
-                }
+                enqueueAddLocked(nx, ny, nz, OPPOSITE_ORDINAL[d])
             }
         }
     }
 
+    private fun markLightBoundaryChunks(world: World, cx: Int, cy: Int, cz: Int, lx: Int, ly: Int, lz: Int) {
+        if (lx == 0) getChunkCached(world, cx - 1, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lx == Chunk.MASK) getChunkCached(world, cx + 1, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (ly == 0 && cy > 0) getChunkCached(world, cx, cy - 1, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (ly == Chunk.MASK && cy < world.chunksY - 1) getChunkCached(world, cx, cy + 1, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lz == 0) getChunkCached(world, cx, cy, cz - 1)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lz == Chunk.MASK) getChunkCached(world, cx, cy, cz + 1)?.let { if (!it.isCompletelyDark) it.markDirty() }
+    }
+
     private fun getIntendedLightGlobal(world: World, wx: Int, wy: Int, wz: Int): Int {
         if (wy !in 0 until world.sizeY) {
-            return if (wy >= world.sizeY) MAX_LIGHT else 0
+            return if (wy >= world.sizeY) MAX_LIGHT else MIN_LIGHT
         }
-        val chunk = world.getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return MAX_LIGHT
+        val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return MAX_LIGHT
         return chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK)
     }
 
-    private fun enqueueAddLocked(x: Int, y: Int, z: Int) {
+    private fun enqueueAddLocked(x: Int, y: Int, z: Int, fromDir: Byte) {
         if (addCount == addX.size) {
             val newCap = addX.size * 2
             val nx = IntArray(newCap)
             val ny = IntArray(newCap)
             val nz = IntArray(newCap)
+            val nd = ByteArray(newCap)
             for (i in 0 until addCount) {
                 val idx = (addHead + i) % addX.size
                 nx[i] = addX[idx]
                 ny[i] = addY[idx]
                 nz[i] = addZ[idx]
+                nd[i] = addFromDir[idx]
             }
             addX = nx
             addY = ny
             addZ = nz
+            addFromDir = nd
             addHead = 0
             addTail = addCount
         }
         addX[addTail] = x
         addY[addTail] = y
         addZ[addTail] = z
+        addFromDir[addTail] = fromDir
         addTail = (addTail + 1) % addX.size
         addCount++
     }
 
-    private fun enqueueRemoveLocked(x: Int, y: Int, z: Int, oldLevel: Int) {
+    private fun enqueueRemoveLocked(x: Int, y: Int, z: Int, oldLevel: Int, fromDir: Byte) {
         if (remCount == remX.size) {
             val newCap = remX.size * 2
             val nx = IntArray(newCap)
             val ny = IntArray(newCap)
             val nz = IntArray(newCap)
             val nl = IntArray(newCap)
+            val nd = ByteArray(newCap)
             for (i in 0 until remCount) {
                 val idx = (remHead + i) % remX.size
                 nx[i] = remX[idx]
                 ny[i] = remY[idx]
                 nz[i] = remZ[idx]
                 nl[i] = remLevel[idx]
+                nd[i] = remFromDir[idx]
             }
             remX = nx
             remY = ny
             remZ = nz
             remLevel = nl
+            remFromDir = nd
             remHead = 0
             remTail = remCount
         }
@@ -496,15 +1022,46 @@ class LightEngine(
         remY[remTail] = y
         remZ[remTail] = z
         remLevel[remTail] = oldLevel
+        remFromDir[remTail] = fromDir
         remTail = (remTail + 1) % remX.size
         remCount++
     }
 
+    private fun growSyncAdd() {
+        val next = syncAddX.size * 2
+        syncAddX = syncAddX.copyOf(next)
+        syncAddY = syncAddY.copyOf(next)
+        syncAddZ = syncAddZ.copyOf(next)
+        syncAddFromDir = syncAddFromDir.copyOf(next)
+    }
+
+    private fun growSyncRem() {
+        val next = syncRemX.size * 2
+        syncRemX = syncRemX.copyOf(next)
+        syncRemY = syncRemY.copyOf(next)
+        syncRemZ = syncRemZ.copyOf(next)
+        syncRemLevel = syncRemLevel.copyOf(next)
+        syncRemFromDir = syncRemFromDir.copyOf(next)
+    }
+
+    private fun growReseed() {
+        val next = reseedX.size * 2
+        reseedX = reseedX.copyOf(next)
+        reseedY = reseedY.copyOf(next)
+        reseedZ = reseedZ.copyOf(next)
+    }
+
     companion object {
-        const val MAX_LIGHT = 15
-        const val DEFAULT_MAX_NODES_PER_FRAME = 256
-        const val DEFAULT_MAX_BUDGET_NS = 1_000_000L // 1.0 ms per frame budget
+        const val MIN_LIGHT = Chunk.MIN_LIGHT
+        const val DEFAULT_AMBIENT_LIGHT = Chunk.DEFAULT_AMBIENT_LIGHT
+        const val MAX_LIGHT = Chunk.MAX_LIGHT
+        const val DEFAULT_MAX_NODES_PER_FRAME = 500
+        const val DEFAULT_MAX_BUDGET_NS = 1_500_000L // 1.5 ms per frame budget
         private const val INITIAL_QUEUE_CAPACITY = 1024
+        private const val DIR_NONE: Byte = -1
         private val DIRECTIONS = Direction.values()
+        private val OPPOSITE_ORDINAL = ByteArray(DIRECTIONS.size) { idx ->
+            DIRECTIONS[idx].opposite.ordinal.toByte()
+        }
     }
 }

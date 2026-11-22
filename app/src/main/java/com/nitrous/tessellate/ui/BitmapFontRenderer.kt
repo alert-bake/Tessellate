@@ -68,6 +68,9 @@ class BitmapFontRenderer(
     private var activeConfig: BitmapFontConfig = defaultFontConfig()
     private var isFontDataLoaded: Boolean = false
 
+    @Volatile
+    var activeBatcher: UiBatchRenderer? = null
+
     private val modelMatrix = Matrix4.create()
     private val mvpMatrix = Matrix4.create()
 
@@ -338,7 +341,25 @@ class BitmapFontRenderer(
         a: Float = 1f,
         shadow: Boolean = true
     ) {
-        if (pageTextureHandles.isEmpty() || quadVaoId == 0 || text.isEmpty()) return
+        if (text.isEmpty()) return
+        val batcher = activeBatcher
+        if (batcher != null && pageTextureHandles.isNotEmpty()) {
+            pushTextQuadsToBatcher(
+                batcher = batcher,
+                text = text,
+                x = x,
+                y = y,
+                scale = scale,
+                r = r,
+                g = g,
+                b = b,
+                a = a,
+                shadow = shadow
+            )
+            return
+        }
+
+        if (pageTextureHandles.isEmpty() || quadVaoId == 0) return
 
         val safeScale = scale.coerceAtLeast(1)
         val gapPx = (activeConfig.charGap.coerceAtLeast(0) * safeScale).toFloat()
@@ -412,6 +433,92 @@ class BitmapFontRenderer(
                 cursorX += glyphW + gapPx
             }
         }
+    }
+
+    /**
+     * Pushes all shadow and glyph quads for [text] into [batcher] so multi-character strings render
+     * inside a single batched `glDrawElements` call per font texture page.
+     */
+    fun pushTextQuadsToBatcher(
+        batcher: UiBatchRenderer,
+        text: String,
+        x: Float,
+        y: Float,
+        scale: Int,
+        r: Float = 1f,
+        g: Float = 1f,
+        b: Float = 1f,
+        a: Float = 1f,
+        shadow: Boolean = true,
+        pageHandleResolver: (Int) -> Int = { pageIdx ->
+            pageTextureHandles.getOrNull(pageIdx) ?: fontTextureHandle
+        }
+    ): Int {
+        if (text.isEmpty()) return 0
+        if (!isFontDataLoaded) loadFontMetadataAndBitmaps(keepBitmaps = false)
+
+        val safeScale = scale.coerceAtLeast(1)
+        val gapPx = (activeConfig.charGap.coerceAtLeast(0) * safeScale).toFloat()
+        val startX = round(x)
+        val startY = round(y)
+        val fallbackGlyph = glyphMap['?'.code]
+        var pushed = 0
+
+        val startPass = if (shadow) 0 else 1
+        for (pass in startPass..1) {
+            val isShadow = (pass == 0)
+            val ox = if (isShadow) safeScale.toFloat() else 0f
+            val oy = if (isShadow) safeScale.toFloat() else 0f
+            val cr = if (isShadow) r * 0.18f else r
+            val cg = if (isShadow) g * 0.18f else g
+            val cb = if (isShadow) b * 0.18f else b
+            val ca = if (isShadow) a * 0.9f else a
+
+            var cursorX = startX
+            var i = 0
+            while (i < text.length) {
+                val cp = text.codePointAt(i)
+                i += Character.charCount(cp)
+
+                if (cp == ' '.code) {
+                    val spaceUnits = glyphMap[cp]?.widthUnits ?: activeConfig.spaceWidth
+                    cursorX += spaceUnits * safeScale + gapPx
+                    continue
+                }
+
+                val glyph = glyphMap[cp] ?: fallbackGlyph
+                if (glyph == null) {
+                    cursorX += activeConfig.spaceWidth * safeScale + gapPx
+                    continue
+                }
+
+                val handle = pageHandleResolver(glyph.pageIndex)
+                val glyphW = (glyph.widthUnits * safeScale).toFloat()
+                val glyphH = (glyph.heightUnits * safeScale).toFloat()
+                if (handle != 0) {
+                    batcher.pushTexturedQuad(
+                        textureHandle = handle,
+                        x = cursorX + ox,
+                        y = startY + oy,
+                        width = glyphW,
+                        height = glyphH,
+                        u1 = glyph.u1,
+                        v1 = glyph.v1,
+                        u2 = glyph.u2,
+                        v2 = glyph.v2,
+                        r = cr,
+                        g = cg,
+                        b = cb,
+                        a = ca,
+                        whiteOverlay = false,
+                        forceNearest = true
+                    )
+                    pushed++
+                }
+                cursorX += glyphW + gapPx
+            }
+        }
+        return pushed
     }
 
     /**

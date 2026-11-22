@@ -39,6 +39,7 @@ object ItemRegistry {
     val OAK_LOG: Item get() = getRequired("Tessellate:oak_log")
     val OAK_PLANKS: Item get() = getRequired("Tessellate:oak_planks")
     val LEAVES: Item get() = getRequired("Tessellate:leaves")
+    val TORCH: Item get() = getRequired("Tessellate:torch")
     val RUBIDIUM_INGOT: Item get() = getRequired("Tessellate:rubidium_ingot")
     val IRON_PICKAXE: Item get() = getRequired("Tessellate:iron_pickaxe")
     val PROTO_STONE: Item get() = getRequired("prototesselate:stone")

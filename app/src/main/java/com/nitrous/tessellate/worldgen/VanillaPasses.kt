@@ -43,6 +43,9 @@ class SurfacePass(
 
         val baseX = chunk.chunkX * Chunk.SIZE
         val baseZ = chunk.chunkZ * Chunk.SIZE
+        var hasSky = false
+        var hasGround = false
+        val lightBuf = ByteArray(Chunk.VOLUME)
 
         for (lx in 0 until Chunk.SIZE) {
             val wx = baseX + lx
@@ -51,13 +54,36 @@ class SurfacePass(
                 val surfaceY = computeSurfaceY(world.seed, wx, wz)
                 for (ly in 0 until Chunk.SIZE) {
                     val wy = baseY + ly
+                    val idx = (ly shl 8) or (lz shl 4) or lx
                     when {
-                        wy > surfaceY -> chunk.setBlockRaw(lx, ly, lz, air)
-                        wy == surfaceY -> chunk.setBlockRaw(lx, ly, lz, grass)
-                        wy >= surfaceY - 4 -> chunk.setBlockRaw(lx, ly, lz, dirt)
+                        wy > surfaceY -> {
+                            chunk.setBlockRaw(lx, ly, lz, air)
+                            lightBuf[idx] = Chunk.MAX_LIGHT.toByte()
+                            hasSky = true
+                        }
+                        wy == surfaceY -> {
+                            chunk.setBlockRaw(lx, ly, lz, grass)
+                            lightBuf[idx] = Chunk.MIN_LIGHT.toByte()
+                            hasGround = true
+                        }
+                        wy >= surfaceY - 4 -> {
+                            chunk.setBlockRaw(lx, ly, lz, dirt)
+                            lightBuf[idx] = Chunk.MIN_LIGHT.toByte()
+                            hasGround = true
+                        }
+                        else -> {
+                            lightBuf[idx] = Chunk.MIN_LIGHT.toByte()
+                            hasGround = true
+                        }
                     }
                 }
             }
+        }
+
+        when {
+            !hasGround -> chunk.markCompletelyLit()
+            !hasSky -> chunk.markCompletelyDark()
+            else -> chunk.setLightArrays(lightBuf, lightBuf)
         }
     }
 
@@ -101,6 +127,10 @@ class CavePass(
                     val wx = baseX + lx
                     if (isCaveAt(world.seed, wx, wy, wz)) {
                         chunk.setBlockRaw(lx, ly, lz, air)
+                        if (chunk.lightIntended != null) {
+                            chunk.setIntendedLight(lx, ly, lz, Chunk.MIN_LIGHT)
+                            chunk.setRenderedLight(lx, ly, lz, Chunk.MIN_LIGHT)
+                        }
                     }
                 }
             }

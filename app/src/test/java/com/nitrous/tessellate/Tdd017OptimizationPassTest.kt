@@ -206,15 +206,15 @@ class Tdd017OptimizationPassTest {
         val slicedLightEngine = LightEngine(maxNodesPerFrame = 3, maxBudgetNs = 5_000_000L)
         slicedLightEngine.seedLight(world, 1, 8, 8, 15)
 
-        // Before stepping, intended is seeded at origin while rendered is still 0
+        // Before stepping, intended is seeded at origin while rendered is still -16 (absolute darkness)
         assertEquals(15, tunnelChunk.getIntendedLight(1, 8, 8))
-        assertEquals(0, tunnelChunk.getRenderedLight(1, 8, 8))
+        assertEquals(Chunk.MIN_LIGHT, tunnelChunk.getRenderedLight(1, 8, 8))
 
         // First slice (3 nodes): origin syncs to rendered=15 and wave reaches ~2-3 blocks, NOT all 15 blocks!
         val processedStep1 = slicedLightEngine.step(world, maxNodes = 3, budgetNs = 5_000_000L)
         assertEquals(3, processedStep1)
         assertEquals(15, tunnelChunk.getRenderedLight(1, 8, 8))
-        assertTrue("Time-sliced BFS must not solve entire 15-block tunnel in 1 small frame", tunnelChunk.getRenderedLight(15, 8, 8) == 0)
+        assertTrue("Time-sliced BFS must not solve entire 15-block tunnel in 1 small frame", tunnelChunk.getRenderedLight(15, 8, 8) == Chunk.MIN_LIGHT)
         assertTrue("BFS queue must still have pending nodes across frames", slicedLightEngine.hasPendingWork())
 
         // Continue stepping frame by frame until wave finishes

@@ -53,6 +53,7 @@ class TexturedUiRenderer(
 
     // Data-driven crisp bitmap font renderer (loads textures/UI_font.json + UI_font_ascii.png)
     val bitmapFontRenderer = BitmapFontRenderer(context)
+    val uiBatchRenderer = UiBatchRenderer()
 
     // Settings screen UI & persistence wiring
     val settingsScreen = SettingsScreen(engine)
@@ -305,6 +306,8 @@ class TexturedUiRenderer(
 
         initHudTexture()
         bitmapFontRenderer.initGl()
+        uiBatchRenderer.initGl()
+        bitmapFontRenderer.activeBatcher = uiBatchRenderer
     }
 
     private fun initHudTexture() {
@@ -571,6 +574,7 @@ class TexturedUiRenderer(
         runtime.backend.setCullFace(false)
         runtime.backend.setBlending(true)
 
+        uiBatchRenderer.begin(orthoMatrix)
         shader.bind()
 
         when (appState) {
@@ -588,6 +592,7 @@ class TexturedUiRenderer(
             }
         }
 
+        uiBatchRenderer.endFrame()
         shader.unbind()
         GLES30.glBindVertexArray(0)
     }
@@ -1449,6 +1454,10 @@ class TexturedUiRenderer(
         x: Float, y: Float, width: Float, height: Float,
         r: Float, g: Float, b: Float, a: Float
     ) {
+        if (uiBatchRenderer.isGlInitialized) {
+            uiBatchRenderer.pushSolidQuad(x, y, width, height, r, g, b, a)
+            return
+        }
         if (quadVaoId == 0) return
         Matrix4.setIdentity(modelMatrix)
         Matrix4.translate(modelMatrix, x, y, 0f)
@@ -1504,7 +1513,19 @@ class TexturedUiRenderer(
         whiteOverlay: Boolean,
         forceNearest: Boolean = true
     ) {
-        if (quadVaoId == 0 || textureHandle == 0) return
+        if (textureHandle == 0) return
+        if (uiBatchRenderer.isGlInitialized) {
+            uiBatchRenderer.pushTexturedQuad(
+                textureHandle = textureHandle,
+                x = x, y = y, width = width, height = height,
+                u1 = u1, v1 = v1, u2 = u2, v2 = v2,
+                r = r, g = g, b = b, a = a,
+                whiteOverlay = whiteOverlay,
+                forceNearest = forceNearest
+            )
+            return
+        }
+        if (quadVaoId == 0) return
         Matrix4.setIdentity(modelMatrix)
         Matrix4.translate(modelMatrix, x, y, 0f)
         Matrix4.scale(modelMatrix, width, height, 1f)
@@ -1680,6 +1701,8 @@ class TexturedUiRenderer(
         uiShader?.release()
         uiShader = null
 
+        bitmapFontRenderer.activeBatcher = null
+        uiBatchRenderer.release()
         bitmapFontRenderer.release()
 
         if (quadVaoId != 0) {

@@ -235,6 +235,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
         }
 
         atlasUvMap = nextUvMap
+        rebuildOrderedTileRects(nextUvMap)
         return atlasBitmap
     }
 
@@ -328,6 +329,51 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
                 atlas.setPixel(ax, ay, outPixel)
             }
         }
+    }
+
+    @Volatile
+    private var orderedTileRects: FloatArray = FloatArray(MAX_ATLAS_TILES * 4)
+
+    private fun rebuildOrderedTileRects(uvMap: Map<String, TextureUvRect>) {
+        val rects = FloatArray(MAX_ATLAS_TILES * 4)
+        val fallback = uvMap[TextureConstants.PROTO_DEBUG_BUG] ?: DEFAULT_FALLBACK_UV
+        for (i in 0 until MAX_ATLAS_TILES) {
+            val tileId = ALL_ATLAS_TILE_IDS.getOrNull(i)
+            val uv = if (tileId != null) uvMap[tileId] ?: fallback else fallback
+            val o = i * 4
+            rects[o] = uv.uMin
+            rects[o + 1] = uv.vMin
+            rects[o + 2] = uv.uMax
+            rects[o + 3] = uv.vMax
+        }
+        orderedTileRects = rects
+    }
+
+    fun getAtlasTileIndex(textureId: String): Int {
+        return ATLAS_TILE_INDEX_MAP[textureId] ?: FALLBACK_TILE_INDEX
+    }
+
+    fun getAtlasTileIdByIndex(tileIndex: Int): String {
+        return ALL_ATLAS_TILE_IDS.getOrNull(tileIndex) ?: TextureConstants.PROTO_DEBUG_BUG
+    }
+
+    fun copyAtlasTileRects(dest: FloatArray) {
+        if (atlasUvMap.isEmpty()) {
+            // Ensure deterministic default UVs if called before buildAtlas() in headless tests
+            val rects = orderedTileRects
+            val fallback = DEFAULT_FALLBACK_UV
+            for (i in 0 until minOf(MAX_ATLAS_TILES, dest.size / 4)) {
+                val o = i * 4
+                val hasValue = rects[o + 2] > rects[o]
+                dest[o] = if (hasValue) rects[o] else fallback.uMin
+                dest[o + 1] = if (hasValue) rects[o + 1] else fallback.vMin
+                dest[o + 2] = if (hasValue) rects[o + 2] else fallback.uMax
+                dest[o + 3] = if (hasValue) rects[o + 3] else fallback.vMax
+            }
+            return
+        }
+        val count = minOf(orderedTileRects.size, dest.size)
+        System.arraycopy(orderedTileRects, 0, dest, 0, count)
     }
 
     fun getAtlasUv(textureId: String): TextureUvRect {
@@ -569,6 +615,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
         const val ATLAS_MIN_FILTER = GLES30.GL_LINEAR_MIPMAP_LINEAR
         const val ATLAS_WRAP_MODE = GLES30.GL_CLAMP_TO_EDGE
 
+        const val MAX_ATLAS_TILES = 32
+
         val DEFAULT_FALLBACK_UV = TextureUvRect(0f, 0f, 1f, 1f)
 
         val ATLAS_TILE_GRID: List<Pair<String, Pair<Int, Int>>> = listOf(
@@ -580,7 +628,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
             TextureConstants.BLOCK_STONE to Pair(1, 1),
             TextureConstants.BLOCK_COBBLESTONE to Pair(2, 1),
             TextureConstants.BLOCK_SAND to Pair(3, 1),
-            TextureConstants.BLOCK_GLASS to Pair(0, 2)
+            TextureConstants.BLOCK_GLASS to Pair(0, 2),
+            TextureConstants.BLOCK_TORCH to Pair(0, 3)
         )
 
         val PROCEDURAL_ATLAS_TILES: List<Pair<String, Pair<Int, Int>>> = listOf(
@@ -588,5 +637,13 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
             TextureConstants.BLOCK_LEAVES to Pair(2, 2),
             TextureConstants.BLOCK_OAK_PLANKS to Pair(3, 2)
         )
+
+        val ALL_ATLAS_TILE_IDS: List<String> = (ATLAS_TILE_GRID + PROCEDURAL_ATLAS_TILES).map { it.first }
+
+        private val ATLAS_TILE_INDEX_MAP: Map<String, Int> = ALL_ATLAS_TILE_IDS
+            .mapIndexed { idx, id -> id to idx }
+            .toMap()
+
+        private val FALLBACK_TILE_INDEX: Int = ATLAS_TILE_INDEX_MAP[TextureConstants.PROTO_DEBUG_BUG] ?: 0
     }
 }

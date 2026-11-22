@@ -26,10 +26,14 @@ data class BlockDefinitionJson(
     @Json(name = "is_transparent") val isTransparent: Boolean = false,
     @Json(name = "is_solid") val isSolid: Boolean = true,
     @Json(name = "is_simple") val isSimple: Boolean? = null,
+    val model: String = "cube",
+    val lightEmission: Int = 0,
     val textures: BlockTexturesJson = BlockTexturesJson()
 ) {
     fun resolveOpaque(): Boolean = isOpaque ?: (!isTransparent && isSolid)
     fun resolveSimple(): Boolean = isSimple ?: resolveOpaque()
+    fun resolveModel(): String = model.trim().lowercase().ifEmpty { "cube" }
+    fun resolveLightEmission(): Byte = lightEmission.coerceIn(0, 16).toByte()
 }
 
 /**

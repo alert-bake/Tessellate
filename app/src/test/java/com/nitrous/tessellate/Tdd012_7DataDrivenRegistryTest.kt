@@ -67,8 +67,8 @@ class Tdd012_7DataDrivenRegistryTest {
         assertEquals(0.toByte(), BlockType.AIR.id)
         assertEquals(BlockType.STONE, BlockType.REGISTRY.get("tessellate:stone"))
         assertEquals(BlockType.STONE, BlockType.REGISTRY.getByNumericId(BlockType.STONE.id.toInt()))
-        assertEquals(13, BlockRegistry.size)
-        assertEquals(16, ItemRegistry.size)
+        assertEquals(14, BlockRegistry.size)
+        assertEquals(17, ItemRegistry.size)
     }
 
     @Test

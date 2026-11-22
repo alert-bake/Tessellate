@@ -10,8 +10,9 @@ import com.nitrous.tessellate.texture.TexturePipeline
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Manages chunk GPU meshes, frustum culling, block outline highlights, entity hitboxes,
- * safe GPU resource flushing, and atlas-based batch rendering.
+ * Manages chunk GPU meshes, frustum culling, empty-chunk skipping, front-to-back opaque &
+ * back-to-front transparent chunk sorting, block outline highlights, entity hitboxes,
+ * safe GPU resource flushing, and 12-byte packed vertex rendering.
  */
 class WorldRenderer(
     initialWorld: World
@@ -44,6 +45,7 @@ class WorldRenderer(
 
     private val modelMatrix = Matrix4.create()
     private val mvpMatrix = Matrix4.create()
+    private val tileRectsScratch = FloatArray(TexturePipeline.MAX_ATLAS_TILES * 4)
 
     var totalRenderedFaces: Int = 0
         private set
@@ -52,6 +54,8 @@ class WorldRenderer(
     var visibleChunksCount: Int = 0
         private set
     var frustumCulledChunksCount: Int = 0
+        private set
+    var emptySkippedChunksCount: Int = 0
         private set
     @Volatile
     var lastFrameAtlasBindCount: Int = 0
@@ -191,24 +195,54 @@ class WorldRenderer(
         syncedWorldRef = null
         syncedTopologyVersion = -1L
         syncWithWorld(initGlBuffers = false)
+
         val vertexSource = """
             #version 300 es
-            layout (location = 0) in vec3 aPosition;
-            layout (location = 1) in vec3 aNormal;
-            layout (location = 2) in vec2 aTexCoord;
-            layout (location = 3) in float aShade;
+            layout (location = 0) in uvec3 aPacked;
 
             uniform mat4 uMVPMatrix;
+            uniform vec3 uChunkOrigin;
+            uniform vec4 uTileRects[${TexturePipeline.MAX_ATLAS_TILES}];
 
-            out vec2 vTexCoord;
+            out vec2 vTileUv;
+            out vec4 vTileRect;
             out float vShade;
+            out float vLightBiased;
             out vec3 vNormal;
 
+            vec3 decodeNormal(uint idx) {
+                if (idx == 0u) return vec3(0.0, 1.0, 0.0);
+                if (idx == 1u) return vec3(0.0, -1.0, 0.0);
+                if (idx == 2u) return vec3(0.0, 0.0, -1.0);
+                if (idx == 3u) return vec3(0.0, 0.0, 1.0);
+                if (idx == 4u) return vec3(-1.0, 0.0, 0.0);
+                if (idx == 5u) return vec3(1.0, 0.0, 0.0);
+                return vec3(0.0, 1.0, 0.0);
+            }
+
             void main() {
-                vTexCoord = aTexCoord;
-                vShade = aShade;
-                vNormal = aNormal;
-                gl_Position = uMVPMatrix * vec4(aPosition, 1.0);
+                uint w0 = aPacked.x;
+                uint w1 = aPacked.y;
+                uint w2 = aPacked.z;
+
+                float lx = float(w0 & 0x1FFFu) / 256.0;
+                float ly = float((w0 >> 13u) & 0x1FFFu) / 256.0;
+                float lz = float(w1 & 0x1FFFu) / 256.0;
+
+                uint normIdx = (w0 >> 26u) & 0x7u;
+                vNormal = decodeNormal(normIdx);
+
+                vLightBiased = float((w1 >> 13u) & 0x3Fu);
+                float uTile = float((w1 >> 19u) & 0x1Fu);
+                float vTile = float((w1 >> 24u) & 0x1Fu);
+                vTileUv = vec2(uTile, vTile);
+
+                uint tileId = min(w2 & 0xFFu, ${TexturePipeline.MAX_ATLAS_TILES - 1}u);
+                vTileRect = uTileRects[tileId];
+                vShade = float((w2 >> 8u) & 0xFFu) / 255.0;
+
+                vec3 worldPos = uChunkOrigin + vec3(lx, ly, lz);
+                gl_Position = uMVPMatrix * vec4(worldPos, 1.0);
             }
         """.trimIndent()
 
@@ -216,8 +250,10 @@ class WorldRenderer(
             #version 300 es
             precision mediump float;
 
-            in vec2 vTexCoord;
+            in vec2 vTileUv;
+            in vec4 vTileRect;
             in float vShade;
+            in float vLightBiased;
             in vec3 vNormal;
 
             uniform sampler2D uTexture;
@@ -226,19 +262,25 @@ class WorldRenderer(
             out vec4 fragColor;
 
             void main() {
-                vec4 texColor = texture(uTexture, vTexCoord);
+                vec2 tileSpan = vTileRect.zw - vTileRect.xy;
+                vec2 wrappedUv = vTileUv - max(ceil(vTileUv) - 1.0, 0.0);
+                vec2 atlasUv = mix(vTileRect.xy, vTileRect.zw, clamp(wrappedUv, 0.0, 1.0));
+                vec2 dx = dFdx(vTileUv) * tileSpan;
+                vec2 dy = dFdy(vTileUv) * tileSpan;
+
+                vec4 texColor = textureGrad(uTexture, atlasUv, dx, dy);
                 if (texColor.a < 0.01) {
                     discard;
                 }
 
-                // Sun directional lighting
+                // Sun directional lighting + TDD-019 signed [-16..+16] voxel brightness curve
                 vec3 norm = normalize(vNormal);
                 vec3 sun = normalize(uSunDir);
                 float sunDiff = max(dot(norm, sun), 0.0) * 0.45;
                 float ambient = 0.55;
+                float voxelLight = clamp(vLightBiased / 32.0, 0.0, 1.0);
 
-                // Combine sun lighting with face directional shade
-                float totalLight = (ambient + sunDiff) * vShade;
+                float totalLight = (ambient + sunDiff) * vShade * voxelLight;
                 vec3 litColor = texColor.rgb * totalLight;
 
                 fragColor = vec4(litColor, texColor.a);
@@ -270,19 +312,15 @@ class WorldRenderer(
         highlightVaoId = vao[0]
         highlightVboId = vbo[0]
 
-        // 12 lines of a unit cube [0, 1] x [0, 1] x [0, 1]
         val lines = floatArrayOf(
-            // Bottom 4 lines
             0f, 0f, 0f,  1f, 0f, 0f,
             1f, 0f, 0f,  1f, 0f, 1f,
             1f, 0f, 1f,  0f, 0f, 1f,
             0f, 0f, 1f,  0f, 0f, 0f,
-            // Top 4 lines
             0f, 1f, 0f,  1f, 1f, 0f,
             1f, 1f, 0f,  1f, 1f, 1f,
             1f, 1f, 1f,  0f, 1f, 1f,
             0f, 1f, 1f,  0f, 1f, 0f,
-            // Vertical 4 lines
             0f, 0f, 0f,  0f, 1f, 0f,
             1f, 0f, 0f,  1f, 1f, 0f,
             1f, 0f, 1f,  1f, 1f, 1f,
@@ -333,8 +371,7 @@ class WorldRenderer(
 
     /**
      * Syncs chunk meshes with dynamically streamed chunks and updates dirty/pending GPU meshes.
-     * When [uploadToGpu] is true (live GL render loop), applies a per-frame rebuild/upload budget
-     * prioritized nearest to ([focusX], [focusZ]) so chunk streaming never freezes the render thread.
+     * Uses allocation-free in-place insertion sorting near ([focusX], [focusZ]).
      */
     fun updateMeshes(
         texturePipeline: TexturePipeline,
@@ -367,6 +404,9 @@ class WorldRenderer(
                 val mesh = chunkMeshes[i]
                 val prebuiltAvailable = mesh.rebuildCount == 0 && !mesh.chunk.isEmpty
                 if (mesh.chunk.needsMeshRebuild || (uploadToGpu && mesh.hasPendingGpuUpload) || prebuiltAvailable) {
+                    val dx = mesh.centerX - focusX
+                    val dz = mesh.centerZ - focusZ
+                    mesh.sortDistSq = dx * dx + dz * dz
                     dirtyQueueScratch.add(mesh)
                 }
             }
@@ -377,11 +417,7 @@ class WorldRenderer(
         }
 
         if (uploadToGpu && dirtyQueueScratch.size > 1) {
-            dirtyQueueScratch.sortBy { mesh ->
-                val cx = mesh.chunk.chunkX * Chunk.SIZE + 8f - focusX
-                val cz = mesh.chunk.chunkZ * Chunk.SIZE + 8f - focusZ
-                cx * cx + cz * cz
-            }
+            sortMeshesAscendingByDistSq(dirtyQueueScratch)
         }
 
         val maxCount = if (uploadToGpu) MAX_MESH_UPLOADS_PER_FRAME else Int.MAX_VALUE
@@ -399,7 +435,6 @@ class WorldRenderer(
             val c = mesh.chunk
             val pos = ChunkPos(c.chunkX, c.chunkY, c.chunkZ)
 
-            // Check if the background streaming thread finished a prebuilt CPU mesh for this chunk
             val prebuilt = currentWorld.consumePrebuiltMesh(pos)
             if (prebuilt != null && prebuilt.chunk === c && prebuilt.rebuildCount > 0 && !c.needsMeshRebuild) {
                 synchronized(meshSwapLock) {
@@ -452,43 +487,97 @@ class WorldRenderer(
     }
 
     /**
-     * Extracts the 6 frustum planes from [viewProjectionMatrix] and filters [chunkMeshes]
-     * to only those whose world-space [ChunkMesh.worldBounds] AABB intersects or is inside the frustum.
+     * Extracts the 6 frustum planes from [viewProjectionMatrix], skips empty chunks early, and filters
+     * [chunkMeshes] to only those whose world-space [ChunkMesh.worldBounds] intersects the frustum.
      */
-    private fun updateVisibleChunks(viewProjectionMatrix: FloatArray) {
+    private fun updateVisibleChunks(
+        viewProjectionMatrix: FloatArray,
+        cameraX: Float = 0f,
+        cameraY: Float = 0f,
+        cameraZ: Float = 0f,
+        sortByDistance: Boolean = false
+    ) {
         frustum.extractPlanes(viewProjectionMatrix)
         visibleChunkMeshes.clear()
         var totalChunks = 0
+        var emptySkipped = 0
+        var frustumCulled = 0
+
         synchronized(meshSwapLock) {
             totalChunks = chunkMeshes.size
             for (i in 0 until totalChunks) {
                 val mesh = chunkMeshes[i]
+                // Skip completely empty or cleanly rebuilt zero-index chunks before frustum tests
+                if (mesh.chunk.isEmpty || (mesh.rebuildCount > 0 && mesh.indexCount <= 0)) {
+                    emptySkipped++
+                    continue
+                }
                 if (frustum.intersectsAabb(mesh.worldBounds)) {
+                    if (sortByDistance) {
+                        val dx = mesh.centerX - cameraX
+                        val dy = mesh.centerY - cameraY
+                        val dz = mesh.centerZ - cameraZ
+                        mesh.sortDistSq = dx * dx + dy * dy + dz * dz
+                    }
                     visibleChunkMeshes.add(mesh)
+                } else {
+                    frustumCulled++
                 }
             }
         }
+
+        if (sortByDistance && visibleChunkMeshes.size > 1) {
+            sortMeshesAscendingByDistSq(visibleChunkMeshes)
+        }
+
         visibleChunksCount = visibleChunkMeshes.size
-        frustumCulledChunksCount = totalChunks - visibleChunksCount
+        emptySkippedChunksCount = emptySkipped
+        frustumCulledChunksCount = frustumCulled
     }
 
     /**
-     * Computes and returns a snapshot list of frustum-visible chunk meshes for the given [viewProjectionMatrix].
+     * Computes and returns a snapshot list of frustum-visible chunk meshes for [viewProjectionMatrix],
+     * sorted front-to-back relative to ([cameraX], [cameraY], [cameraZ]).
      */
-    fun computeVisibleChunks(viewProjectionMatrix: FloatArray): List<ChunkMesh> {
-        updateVisibleChunks(viewProjectionMatrix)
+    fun computeVisibleChunks(
+        viewProjectionMatrix: FloatArray,
+        cameraX: Float = 0f,
+        cameraY: Float = 0f,
+        cameraZ: Float = 0f,
+        sortFrontToBack: Boolean = true
+    ): List<ChunkMesh> {
+        updateVisibleChunks(
+            viewProjectionMatrix = viewProjectionMatrix,
+            cameraX = cameraX,
+            cameraY = cameraY,
+            cameraZ = cameraZ,
+            sortByDistance = sortFrontToBack
+        )
         return visibleChunkMeshes.toList()
     }
 
     /**
-     * Renders frustum-visible chunk meshes in two passes:
-     * - Pass 1: Opaque geometry (GL_BLEND disabled, depth writes enabled)
-     * - Pass 2: Transparent geometry (GL_BLEND enabled, depth mask disabled during blend pass)
+     * Renders frustum-visible non-empty chunk meshes in two sorted passes:
+     * - Pass 1 (Opaque): front-to-back for optimal early-Z rejection (GL_BLEND disabled, depth writes on).
+     * - Pass 2 (Transparent): back-to-front via reverse iteration for clean alpha blending (depth mask off).
      */
-    fun render(viewProjectionMatrix: FloatArray, texturePipeline: TexturePipeline, targetHit: RaycastHit?) {
+    fun render(
+        viewProjectionMatrix: FloatArray,
+        texturePipeline: TexturePipeline,
+        targetHit: RaycastHit?,
+        cameraX: Float = 0f,
+        cameraY: Float = 0f,
+        cameraZ: Float = 0f
+    ) {
         lastFrameAtlasBindCount = 0
         lastRenderedChunksCount = 0
-        updateVisibleChunks(viewProjectionMatrix)
+        updateVisibleChunks(
+            viewProjectionMatrix = viewProjectionMatrix,
+            cameraX = cameraX,
+            cameraY = cameraY,
+            cameraZ = cameraZ,
+            sortByDistance = true
+        )
         val visibleChunks = visibleChunkMeshes
 
         val shader = worldShader ?: return
@@ -503,18 +592,16 @@ class WorldRenderer(
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, atlasHandle)
         lastFrameAtlasBindCount = 1
         shader.setUniform1i("uTexture", 0)
+        texturePipeline.copyAtlasTileRects(tileRectsScratch)
+        shader.setUniform4fv("uTileRects", TexturePipeline.MAX_ATLAS_TILES, tileRectsScratch)
 
         // Sun direction (overhead diagonal)
         shader.setUniform3f("uSunDir", 0.4f, 0.85f, 0.35f)
-
-        // Identity model matrix since chunk vertices are already in world space coordinates
-        Matrix4.setIdentity(modelMatrix)
-        Matrix4.multiply(mvpMatrix, viewProjectionMatrix, modelMatrix)
-        shader.setUniformMatrix4fv("uMVPMatrix", mvpMatrix)
+        shader.setUniformMatrix4fv("uMVPMatrix", viewProjectionMatrix)
 
         var renderedChunks = 0
 
-        // Pass 1: Opaque blocks (Dirt, Stone, Grass)
+        // Pass 1: Opaque blocks front-to-back (maximizes early-Z hardware culling)
         GLES30.glDisable(GLES30.GL_BLEND)
         GLES30.glDepthMask(true)
         for (i in 0 until visibleChunks.size) {
@@ -523,18 +610,20 @@ class WorldRenderer(
                 renderedChunks++
             }
             if (mesh.opaqueIndexCount > 0) {
+                shader.setUniform3f("uChunkOrigin", mesh.originX, mesh.originY, mesh.originZ)
                 mesh.renderOpaque()
             }
         }
         lastRenderedChunksCount = renderedChunks
 
-        // Pass 2: Transparent blocks (Glass, Water, Leaves)
+        // Pass 2: Transparent & cross-model blocks back-to-front (reverse order of sorted array)
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDepthMask(false)
-        for (i in 0 until visibleChunks.size) {
+        for (i in visibleChunks.size - 1 downTo 0) {
             val mesh = visibleChunks[i]
             if (mesh.transparentIndexCount > 0) {
+                shader.setUniform3f("uChunkOrigin", mesh.originX, mesh.originY, mesh.originZ)
                 mesh.renderTransparent()
             }
         }
@@ -542,7 +631,6 @@ class WorldRenderer(
 
         shader.unbind()
 
-        // Render targeted block wireframe outline if raycast hit a block
         if (targetHit != null && highlightShader != null && highlightVaoId != 0) {
             renderBlockOutline(viewProjectionMatrix, targetHit.blockPos)
         }
@@ -700,5 +788,19 @@ class WorldRenderer(
     companion object {
         private const val MAX_MESH_UPLOADS_PER_FRAME = 6
         private const val MAX_MESH_BUDGET_NS = 4_000_000L
+
+        /** Zero-allocation in-place insertion sort ascending by [ChunkMesh.sortDistSq]. */
+        private fun sortMeshesAscendingByDistSq(list: MutableList<ChunkMesh>) {
+            for (i in 1 until list.size) {
+                val key = list[i]
+                val keyDist = key.sortDistSq
+                var j = i - 1
+                while (j >= 0 && list[j].sortDistSq > keyDist) {
+                    list[j + 1] = list[j]
+                    j--
+                }
+                list[j + 1] = key
+            }
+        }
     }
 }

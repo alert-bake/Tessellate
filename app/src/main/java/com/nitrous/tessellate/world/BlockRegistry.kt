@@ -52,6 +52,7 @@ object BlockRegistry {
     val COBBLESTONE: BlockType get() = getRequired("Tessellate:cobblestone")
     val OAK_LOG: BlockType get() = getRequired("Tessellate:oak_log")
     val LEAVES: BlockType get() = getRequired("Tessellate:leaves")
+    val TORCH: BlockType get() = getRequired("Tessellate:torch")
 
     internal fun clearForBootstrap() {
         synchronized(registryLock) {
@@ -79,7 +80,9 @@ object BlockRegistry {
         hardness: Float = 1.0f,
         isTransparent: Boolean = false,
         isSolid: Boolean = isOpaque,
-        isSimple: Boolean = isOpaque
+        isSimple: Boolean = isOpaque,
+        model: String = BlockType.MODEL_CUBE,
+        lightEmission: Byte = 0
     ): BlockType {
         synchronized(registryLock) {
             if (internalRegistry.isFrozen) {
@@ -104,7 +107,9 @@ object BlockRegistry {
                 hardness = hardness,
                 isTransparent = isTransparent,
                 isSolid = isSolid,
-                isSimple = isSimple
+                isSimple = isSimple,
+                model = model,
+                lightEmission = lightEmission
             )
 
             internalRegistry.register(identifier, assignedNumericId, block)
@@ -130,7 +135,9 @@ object BlockRegistry {
             hardness = block.hardness,
             isTransparent = block.isTransparent,
             isSolid = block.isSolid,
-            isSimple = block.isSimple
+            isSimple = block.isSimple,
+            model = block.model,
+            lightEmission = block.lightEmission
         )
     }
 

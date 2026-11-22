@@ -19,6 +19,7 @@ object TextureConstants {
     const val BLOCK_OAK_LOG = "block_oak_log"
     const val BLOCK_LEAVES = "block_leaves"
     const val BLOCK_OAK_PLANKS = "block_oak_planks"
+    const val BLOCK_TORCH = "block_torch"
 
     // On-screen directional D-pad and action controller textures (128x128)
     const val PROTO_BASE_CONTR = "proto_base_contr"
@@ -46,7 +47,8 @@ object TextureConstants {
         BLOCK_GLASS,
         BLOCK_SAND,
         BLOCK_COBBLESTONE,
-        BLOCK_STONE
+        BLOCK_STONE,
+        BLOCK_TORCH
     )
 
     val ALL_CONTROLLER_IDS = listOf(
@@ -84,6 +86,7 @@ object TextureConstants {
         BLOCK_OAK_LOG -> "Oak log bark block"
         BLOCK_LEAVES -> "Oak leaves canopy block"
         BLOCK_OAK_PLANKS -> "Oak planks wooden block"
+        BLOCK_TORCH -> "Cross-modeled luminous torch"
         PROTO_CONTR_JUMP -> "Jump button controller texture"
         UI_GUI_WIDGETS -> "UI widgets texture atlas"
         UI_GUI_INVENTORY -> "Inventory & crafting GUI texture atlas"

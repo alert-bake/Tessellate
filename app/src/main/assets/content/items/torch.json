@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:torch",
+  "display_name": "Torch",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:torch"
+}

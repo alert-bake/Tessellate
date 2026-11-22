@@ -85,6 +85,13 @@ class Camera3D(
         }
     }
 
+    @Synchronized
+    fun copyProjectionMatrix(dest: FloatArray) {
+        if (dest.size >= 16) {
+            System.arraycopy(projectionMatrix, 0, dest, 0, 16)
+        }
+    }
+
     /**
      * Updates First-Person camera transformation placed at the player's eye level.
      */

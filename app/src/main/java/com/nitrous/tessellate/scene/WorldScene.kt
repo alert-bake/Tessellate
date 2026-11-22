@@ -459,7 +459,7 @@ class WorldScene : IGameScene {
         world.copyEntitiesTo(pickupEntitiesScratch)
         for (i in pickupEntitiesScratch.size - 1 downTo 0) {
             val entity = pickupEntitiesScratch[i]
-            if (entity is ItemDropEntity && !entity.isRemoved) {
+            if (entity is ItemDropEntity && !entity.isRemoved && !entity.isSleeping) {
                 if (player.boundingBox.intersects(entity.boundingBox)) {
                     val remaining = player.inventory.addItem(entity.itemId, 1)
                     if (remaining == 0) {
@@ -534,16 +534,27 @@ class WorldScene : IGameScene {
         // Render visible world chunks and targeted block wireframe outline using matrix snapshot
         val renderStartNs = if (profileEnabled) System.nanoTime() else 0L
         camera.copyViewProjectionMatrix(viewProjScratch)
-        worldRenderer.render(viewProjScratch, pipeline, currentTargetHit)
+        worldRenderer.render(
+            viewProjectionMatrix = viewProjScratch,
+            texturePipeline = pipeline,
+            targetHit = currentTargetHit,
+            cameraX = camera.eyeX,
+            cameraY = camera.eyeY,
+            cameraZ = camera.eyeZ
+        )
 
-        // Render dynamic entities via independent draw path outside chunk meshes
+        // Render dynamic entities via independent draw path outside chunk meshes with world lightIntended
         world.copyEntitiesTo(renderEntitiesScratch)
-        entityRenderer.render(renderEntitiesScratch, camera, pipeline)
+        entityRenderer.render(renderEntitiesScratch, camera, pipeline, world)
 
         // Render wireframe AABB hitboxes when Show Hitboxes debug toggle is active
         if (worldRenderer.showHitboxes) {
             worldRenderer.renderHitboxes(viewProjScratch, renderEntitiesScratch, player)
         }
+
+        // Render player first-person hand / held block in foreground depth layer shaded by lightIntended
+        GLES30.glClear(GLES30.GL_DEPTH_BUFFER_BIT)
+        entityRenderer.renderFirstPersonHand(camera, world, selectedItem, pipeline)
         val renderMs = if (profileEnabled) (System.nanoTime() - renderStartNs) * FrameProfiler.NS_TO_MS else 0f
 
         profiler.recordRenderStage(
@@ -588,12 +599,12 @@ class WorldScene : IGameScene {
 
         val targetPos = miningBlockPos ?: return false
         val block = world.getBlock(targetPos)
-        if (!block.isMineable || block.hardness <= 0f) {
+        if (!block.isMineable) {
             cancelMining()
             return false
         }
 
-        if (player.isInstaMine) {
+        if (player.isInstaMine || block.hardness <= 0f) {
             miningProgress = 1.0f
         } else {
             miningProgress += deltaTimeSeconds / block.hardness

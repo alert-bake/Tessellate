@@ -3,8 +3,9 @@ package com.nitrous.tessellate.world
 /**
  * 16x16x16 block storage unit decoupled from mesh generation and rendering.
  *
- * Includes compact Lazyprop lighting state ([lightIntended], [lightRendered]) allocated lazily
- * only for chunks that are neither uniformly dark nor uniformly sky-lit.
+ * Includes compact Lazyprop lighting state ([lightIntended], [lightRendered]) on the signed
+ * `-16..+16` scale (`-16` = absolute darkness, `0` = ambient baseline, `+16` = brightest),
+ * allocated lazily only for chunks that are neither uniformly `-16` dark nor uniformly `+16` lit.
  */
 class Chunk(
     val chunkX: Int,
@@ -15,16 +16,18 @@ class Chunk(
         const val SIZE = 16
         const val VOLUME = SIZE * SIZE * SIZE // 4096 blocks
         const val MASK = SIZE - 1
-        const val MAX_LIGHT = 15
+        const val MIN_LIGHT = -16
+        const val DEFAULT_AMBIENT_LIGHT = 0
+        const val MAX_LIGHT = 16
     }
 
     // 4096-byte compact block storage
     val blocks = ByteArray(VOLUME)
 
     /**
-     * Lazyprop dual-layer light buffers (`0..15` per voxel).
-     * Stay `null` while the chunk is uniformly dark (`isCompletelyDark`) or uniformly lit
-     * (`isCompletelyLit`) to avoid allocating 8 KB per sky/bedrock chunk.
+     * Lazyprop dual-layer light buffers (`-16..+16` per voxel).
+     * Stay `null` while the chunk is uniformly dark (`-16`, [isCompletelyDark]) or uniformly lit
+     * (`+16`, [isCompletelyLit]) to avoid allocating 8 KB per sky/bedrock chunk.
      */
     @Volatile
     var lightIntended: ByteArray? = null
@@ -116,6 +119,9 @@ class Chunk(
                 isEmpty = false
                 isCompletelyLit = false
             }
+            if (type.lightEmission > 0) {
+                isCompletelyDark = false
+            }
             if (!type.isOpaque) {
                 isSolidOpaque = false
             }
@@ -133,6 +139,9 @@ class Chunk(
         if (type != BlockType.AIR) {
             isEmpty = false
             isCompletelyLit = false
+        }
+        if (type.lightEmission > 0) {
+            isCompletelyDark = false
         }
         if (!type.isOpaque) {
             isSolidOpaque = false
@@ -182,7 +191,7 @@ class Chunk(
     }
 
     // =========================================================================
-    // Lazyprop Light State Helpers
+    // Lazyprop Light State Helpers (-16..+16)
     // =========================================================================
 
     fun ensureLightStorage(): Pair<ByteArray, ByteArray> {
@@ -203,21 +212,30 @@ class Chunk(
         return intended to rendered
     }
 
+    /**
+     * Replaces/populates both light buffers directly from [srcIntended] and [srcRendered].
+     */
+    fun setLightArrays(srcIntended: ByteArray, srcRendered: ByteArray) {
+        val (dstIntended, dstRendered) = ensureLightStorage()
+        System.arraycopy(srcIntended, 0, dstIntended, 0, VOLUME)
+        System.arraycopy(srcRendered, 0, dstRendered, 0, VOLUME)
+    }
+
     fun getIntendedLightUnchecked(lx: Int, ly: Int, lz: Int): Int {
         val arr = lightIntended
         return if (arr != null) {
-            arr[(ly shl 8) or (lz shl 4) or lx].toInt() and 0x0F
+            arr[(ly shl 8) or (lz shl 4) or lx].toInt()
         } else {
-            uniformIntendedLight.toInt() and 0x0F
+            uniformIntendedLight.toInt()
         }
     }
 
     fun getRenderedLightUnchecked(lx: Int, ly: Int, lz: Int): Int {
         val arr = lightRendered
         return if (arr != null) {
-            arr[(ly shl 8) or (lz shl 4) or lx].toInt() and 0x0F
+            arr[(ly shl 8) or (lz shl 4) or lx].toInt()
         } else {
-            uniformRenderedLight.toInt() and 0x0F
+            uniformRenderedLight.toInt()
         }
     }
 
@@ -233,7 +251,7 @@ class Chunk(
 
     fun setIntendedLight(lx: Int, ly: Int, lz: Int, level: Int): Boolean {
         if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return false
-        val clamped = level.coerceIn(0, MAX_LIGHT).toByte()
+        val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT).toByte()
         val existingArr = lightIntended
         if (existingArr == null) {
             if (uniformIntendedLight == clamped) return false
@@ -251,7 +269,7 @@ class Chunk(
 
     fun setRenderedLight(lx: Int, ly: Int, lz: Int, level: Int): Boolean {
         if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return false
-        val clamped = level.coerceIn(0, MAX_LIGHT).toByte()
+        val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT).toByte()
         val existingArr = lightRendered
         if (existingArr == null) {
             if (uniformRenderedLight == clamped) return false
@@ -272,8 +290,8 @@ class Chunk(
     fun markCompletelyDark() {
         lightIntended = null
         lightRendered = null
-        uniformIntendedLight = 0
-        uniformRenderedLight = 0
+        uniformIntendedLight = MIN_LIGHT.toByte()
+        uniformRenderedLight = MIN_LIGHT.toByte()
         isCompletelyDark = true
         isCompletelyLit = false
         needsLightUpdate = false
@@ -290,18 +308,18 @@ class Chunk(
     }
 
     /**
-     * Compacts light arrays back to uniform scalar state if every voxel is identically `0` or `15`,
+     * Compacts light arrays back to uniform scalar state if every voxel is identically `-16` or `+16`,
      * freeing 8 KB of heap memory and flagging [isCompletelyDark] / [isCompletelyLit] for future skips.
      */
     fun compactUniformLightIfPossible() {
         val intended = lightIntended ?: return
         val rendered = lightRendered ?: return
         val first = intended[0]
-        if (first != 0.toByte() && first != MAX_LIGHT.toByte()) return
+        if (first != MIN_LIGHT.toByte() && first != MAX_LIGHT.toByte()) return
         for (i in 0 until VOLUME) {
             if (intended[i] != first || rendered[i] != first) return
         }
-        if (first == 0.toByte()) {
+        if (first == MIN_LIGHT.toByte()) {
             markCompletelyDark()
         } else {
             markCompletelyLit()

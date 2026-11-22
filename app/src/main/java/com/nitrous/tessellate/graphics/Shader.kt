@@ -135,6 +135,13 @@ class Shader(
         }
     }
 
+    fun setUniform4fv(name: String, count: Int, values: FloatArray, offset: Int = 0) {
+        val location = getUniformLocation(name)
+        if (location >= 0 && count > 0) {
+            GLES30.glUniform4fv(location, count, values, offset)
+        }
+    }
+
     fun release() {
         if (programId != 0) {
             GLES30.glDeleteProgram(programId)

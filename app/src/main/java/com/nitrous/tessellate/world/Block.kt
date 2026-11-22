@@ -48,7 +48,9 @@ data class BlockType(
     val hardness: Float = 1.0f,
     val isTransparent: Boolean = false,
     val isSolid: Boolean = isOpaque,
-    val isSimple: Boolean = isOpaque
+    val isSimple: Boolean = isOpaque,
+    val model: String = MODEL_CUBE,
+    val lightEmission: Byte = 0
 ) {
     /** Canonical serialized string representation (e.g. "Tessellate:stone") */
     val stringId: String
@@ -60,7 +62,10 @@ data class BlockType(
 
     /** Whether this block can be mined by a player */
     val isMineable: Boolean
-        get() = !isAir && hardness > 0f
+        get() = !isAir && hardness >= 0f
+
+    val isCrossModel: Boolean
+        get() = model == MODEL_CROSS
 
     fun getTextureForFace(direction: Direction): String {
         return when (direction) {
@@ -73,6 +78,9 @@ data class BlockType(
     companion object {
         const val AIR_IDENTIFIER_CANONICAL = "Tessellate:air"
         const val AIR_IDENTIFIER_NORMALIZED = "tessellate:air"
+
+        const val MODEL_CUBE = "cube"
+        const val MODEL_CROSS = "cross"
 
         /**
          * Global block registry accessor preserved for legacy callers (delegates to [BlockRegistry.internalRegistry]).
@@ -96,6 +104,7 @@ data class BlockType(
         val COBBLESTONE: BlockType get() = BlockRegistry.COBBLESTONE
         val OAK_LOG: BlockType get() = BlockRegistry.OAK_LOG
         val LEAVES: BlockType get() = BlockRegistry.LEAVES
+        val TORCH: BlockType get() = BlockRegistry.TORCH
 
         fun values(): Array<BlockType> = BlockRegistry.getAllBlocks().toTypedArray()
 
