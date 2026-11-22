@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:oak_planks",
+  "ingredients": [
+    { "item": "tessellate:oak_log", "count": 1 }
+  ],
+  "result": { "item": "tessellate:oak_planks", "count": 4 }
+}

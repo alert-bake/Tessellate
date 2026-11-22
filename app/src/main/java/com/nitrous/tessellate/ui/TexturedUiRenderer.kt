@@ -57,10 +57,11 @@ class TexturedUiRenderer(
     // Settings screen UI & persistence wiring
     val settingsScreen = SettingsScreen(engine)
 
-    // World Select, Create World, & Pause screens
+    // World Select, Create World, Pause, & Inventory screens
     val worldSelectScreen = WorldSelectScreen(context, engine)
     val createWorldScreen = CreateWorldScreen(engine)
     val pauseScreen = PauseScreen(engine)
+    val inventoryScreen = InventoryScreen(engine)
 
     // Main Menu title & vertical button stack
     val singleplayerButton = UiButton(MenuButtonId.SINGLEPLAYER, "Singleplayer", enabled = true)
@@ -169,6 +170,10 @@ class TexturedUiRenderer(
 
     // Jump button hit area (bottom right in landscape, matching D-pad size and bottom margin)
     val jumpButtonRect = RectF()
+
+    // Invisible 10th-slot touch hitbox immediately to the right of the 9 hotbar slots
+    val inventoryHotspotRect = RectF()
+    private var activeInventoryHotspotPointerId: Int? = null
 
     // Track active pointer IDs pressing the jump button or hotbar so camera drag is never triggered
     private val activeJumpPointers: MutableSet<Int> = java.util.Collections.synchronizedSet(mutableSetOf())
@@ -356,6 +361,9 @@ class TexturedUiRenderer(
         } else if (newState == AppState.DEBUG_OPTIONS) {
             settingsScreen.setScreenTarget(com.nitrous.tessellate.settings.SettingScreenTarget.DEBUG_OPTIONS)
         }
+        if (newState == AppState.INVENTORY) {
+            inventoryScreen.onOpened()
+        }
         if (newState == AppState.PLAYING) {
             invalidateHud()
         }
@@ -372,6 +380,7 @@ class TexturedUiRenderer(
     private fun clearInGamePointers() {
         activeJumpPointers.clear()
         activeHotbarPointers.clear()
+        activeInventoryHotspotPointerId = null
         activeMenuHudPointerId = null
         activeRegenHudPointerId = null
         isMenuHudHovered = false
@@ -388,6 +397,7 @@ class TexturedUiRenderer(
             AppState.CREATE_WORLD -> createWorldScreen.buttons
             AppState.SETTINGS, AppState.DEBUG_OPTIONS -> settingsScreen.getInteractiveButtons()
             AppState.PLAYING -> if (isPaused) pauseScreen.buttons else emptyList()
+            AppState.INVENTORY -> emptyList()
         }
     }
 
@@ -440,6 +450,31 @@ class TexturedUiRenderer(
         val right = screenWidth - jumpMargin
         val left = right - jumpSize
         jumpButtonRect.set(left, top, right, bottom)
+
+        // Invisible 10th hotbar slot hitbox placed immediately to the right of slot 8 (no visuals rendered)
+        if (isWorld && worldSlots.slots.size >= Inventory.HOTBAR_SIZE) {
+            val slot8 = worldSlots.slots[Inventory.HOTBAR_SIZE - 1]
+            val slotWidth = slot8.width()
+            val hotspotLeft = slot8.right
+            val hotspotRight = minOf(hotspotLeft + slotWidth, jumpButtonRect.left - 2f)
+            if (hotspotRight > hotspotLeft + 8f) {
+                inventoryHotspotRect.set(hotspotLeft, slot8.top, hotspotRight, slot8.bottom)
+            } else {
+                inventoryHotspotRect.setEmpty()
+            }
+        } else {
+            inventoryHotspotRect.setEmpty()
+        }
+
+        inventoryScreen.onSurfaceChanged(
+            width = screenWidth,
+            height = screenHeight,
+            invLayout = uiLayout.inventory,
+            hudHotbarBounds = worldSlots.bounds,
+            hudHotbarSlots = worldSlots.slots,
+            hudHotbarScale = worldSlots.scale,
+            hudInventoryHotspotRect = inventoryHotspotRect
+        )
     }
 
     private fun computeMainMenuLayout() {
@@ -489,9 +524,10 @@ class TexturedUiRenderer(
 
         val hotbarW = 182f * hotbarScale
         val hotbarH = 22f * hotbarScale
+        val bottomMargin = (7f * hotbarScale + 10f).coerceAtLeast(20f)
         val maxHotbarLeft = (screenWidth - reservedRight - hotbarW).coerceAtLeast(reservedLeft)
         val hotbarLeft = ((screenWidth - hotbarW) / 2f).coerceIn(reservedLeft, maxHotbarLeft)
-        val hotbarTop = screenHeight - hotbarH - 20f
+        val hotbarTop = screenHeight - hotbarH - bottomMargin
         val bounds = RectF(hotbarLeft, hotbarTop, hotbarLeft + hotbarW, hotbarTop + hotbarH)
 
         val slots = ArrayList<RectF>(Inventory.HOTBAR_SIZE)
@@ -542,6 +578,7 @@ class TexturedUiRenderer(
             AppState.WORLD_SELECT -> renderWorldSelectMenu(shader, pipeline)
             AppState.CREATE_WORLD -> renderCreateWorldMenu(shader, pipeline)
             AppState.SETTINGS, AppState.DEBUG_OPTIONS -> renderSettingsMenu(shader, pipeline)
+            AppState.INVENTORY -> renderInventoryOverlay(shader, pipeline)
             AppState.PLAYING -> {
                 if (isPaused) {
                     renderPauseMenu(shader, pipeline)
@@ -640,6 +677,38 @@ class TexturedUiRenderer(
             fontRenderer = bitmapFontRenderer,
             drawButtonFn = { button, fontScale ->
                 drawWidgetButton(shader, pipeline, button, fontScale)
+            }
+        )
+    }
+
+    private fun renderInventoryOverlay(shader: Shader, pipeline: com.nitrous.tessellate.core.ITexturePipeline) {
+        val invHandle = pipeline.getTextureHandle(TextureConstants.UI_GUI_INVENTORY)
+        inventoryScreen.render(
+            shader = shader,
+            orthoMatrix = orthoMatrix,
+            quadVaoId = quadVaoId,
+            fontRenderer = bitmapFontRenderer,
+            invTexHandle = invHandle,
+            invLayout = uiLayout.inventory,
+            resolveItemTexHandleFn = { itemId ->
+                pipeline.getTextureHandle(resolveItemTextureId(itemId))
+            },
+            drawQuadFn = { x, y, w, h, r, g, b, a ->
+                drawQuad(shader, x, y, w, h, r, g, b, a)
+            },
+            drawOutlineFn = { x, y, w, h, thickness, r, g, b, a ->
+                drawOutline(shader, x, y, w, h, thickness, r, g, b, a)
+            },
+            drawTexturedSubQuadFn = { texHandle, x, y, w, h, u1, v1, u2, v2, r, g, b, a ->
+                drawTexturedSubQuad(
+                    shader = shader,
+                    textureHandle = texHandle,
+                    x = x, y = y, width = w, height = h,
+                    u1 = u1, v1 = v1, u2 = u2, v2 = v2,
+                    r = r, g = g, b = b, a = a,
+                    whiteOverlay = false,
+                    forceNearest = true
+                )
             }
         )
     }
@@ -1022,6 +1091,9 @@ class TexturedUiRenderer(
     private fun drawJumpButton(shader: Shader, pipeline: com.nitrous.tessellate.core.ITexturePipeline) {
         if (jumpButtonRect.isEmpty) return
         val jumpHandle = pipeline.getTextureHandle(TextureConstants.PROTO_CONTR_JUMP)
+        val pressed = activeJumpPointers.isNotEmpty()
+        val tint = if (pressed) 0.72f else 1f
+        val alpha = if (pressed) 0.98f else 0.85f
         drawTexturedQuad(
             shader = shader,
             textureHandle = jumpHandle,
@@ -1029,7 +1101,7 @@ class TexturedUiRenderer(
             y = jumpButtonRect.top,
             width = jumpButtonRect.width(),
             height = jumpButtonRect.height(),
-            r = 1f, g = 1f, b = 1f, a = 0.85f,
+            r = tint, g = tint, b = tint, a = alpha,
             whiteOverlay = false
         )
     }
@@ -1126,17 +1198,19 @@ class TexturedUiRenderer(
                 forceNearest = true
             )
 
-            bitmapFontRenderer.drawTextRightAligned(
-                shader = shader,
-                orthoMatrix = orthoMatrix,
-                quadVaoId = quadVaoId,
-                text = stack.count.toString(),
-                rightX = slotRect.right - 2f * scale,
-                bottomY = slotRect.bottom - 1.5f * scale,
-                scale = digitScale,
-                r = 1f, g = 1f, b = 1f, a = 1f,
-                shadow = true
-            )
+            if (stack.count > 1) {
+                bitmapFontRenderer.drawTextRightAligned(
+                    shader = shader,
+                    orthoMatrix = orthoMatrix,
+                    quadVaoId = quadVaoId,
+                    text = stack.count.toString(),
+                    rightX = slotRect.right - 2f * scale,
+                    bottomY = slotRect.bottom - 1.5f * scale,
+                    scale = digitScale,
+                    r = 1f, g = 1f, b = 1f, a = 1f,
+                    shadow = true
+                )
+            }
         }
 
         // 3. Green selection highlight over active hotbar slot
@@ -1265,13 +1339,22 @@ class TexturedUiRenderer(
 
         if (hudTextureHandle != 0) {
             val scaleFactor = uiScale.coerceIn(0.75f, 1.25f)
+            val rightLimit = when {
+                !btnRegenRect.isEmpty -> btnRegenRect.left - 16f
+                !btnMenuRect.isEmpty -> btnMenuRect.left - 16f
+                else -> screenWidth - 16f
+            }
+            val maxDrawW = (rightLimit - 16f).coerceAtLeast(220f)
+            val desiredW = hudWidth.toFloat() * scaleFactor
+            val drawW = minOf(desiredW, maxDrawW)
+            val drawH = hudHeight.toFloat() * (drawW / hudWidth.toFloat())
             drawTexturedQuad(
                 shader = shader,
                 textureHandle = hudTextureHandle,
                 x = 16f,
                 y = 16f,
-                width = hudWidth.toFloat() * scaleFactor,
-                height = hudHeight.toFloat() * scaleFactor,
+                width = drawW,
+                height = drawH,
                 r = 1f, g = 1f, b = 1f, a = 1f,
                 whiteOverlay = false
             )
@@ -1445,9 +1528,14 @@ class TexturedUiRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
     }
 
+    fun onInventoryTouchEvent(event: MotionEvent): Boolean {
+        if (engine.currentAppState != AppState.INVENTORY) return false
+        return inventoryScreen.onTouchEvent(event)
+    }
+
     /**
-     * Handles touch events for in-game HUD buttons, jump button, and hotbar slots (only when PLAYING).
-     * Returns true if consumed.
+     * Handles touch events for in-game HUD buttons, jump button, invisible inventory hotspot,
+     * and hotbar slots (only when PLAYING). Returns true if consumed.
      */
     fun onTouchEvent(event: MotionEvent, runtime: IGraphicsRuntime): Boolean {
         if (engine.currentAppState != AppState.PLAYING) return false
@@ -1459,6 +1547,9 @@ class TexturedUiRenderer(
 
         when (action) {
             MotionEvent.ACTION_MOVE -> {
+                if (pointerId == activeInventoryHotspotPointerId) {
+                    return true
+                }
                 if (pointerId == activeMenuHudPointerId) {
                     isMenuHudHovered = btnMenuRect.contains(event.getX(idx), event.getY(idx))
                     return true
@@ -1473,6 +1564,21 @@ class TexturedUiRenderer(
                 return false
             }
             MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP -> {
+                if (pointerId == activeInventoryHotspotPointerId) {
+                    val x = event.getX(idx)
+                    val y = event.getY(idx)
+                    activeInventoryHotspotPointerId = null
+                    val releaseSlop = 16f
+                    val withinSlop = !inventoryHotspotRect.isEmpty &&
+                        x >= inventoryHotspotRect.left - releaseSlop &&
+                        x <= inventoryHotspotRect.right + releaseSlop &&
+                        y >= inventoryHotspotRect.top - releaseSlop &&
+                        y <= inventoryHotspotRect.bottom + releaseSlop
+                    if (withinSlop) {
+                        engine.openInventory()
+                    }
+                    return true
+                }
                 if (pointerId == activeMenuHudPointerId) {
                     val x = event.getX(idx)
                     val y = event.getY(idx)
@@ -1504,6 +1610,7 @@ class TexturedUiRenderer(
             MotionEvent.ACTION_CANCEL -> {
                 val hadActive = activeJumpPointers.isNotEmpty() ||
                     activeHotbarPointers.isNotEmpty() ||
+                    activeInventoryHotspotPointerId != null ||
                     activeMenuHudPointerId != null ||
                     activeRegenHudPointerId != null
                 for (pid in activeJumpPointers) {
@@ -1530,7 +1637,7 @@ class TexturedUiRenderer(
             return true
         }
 
-        // 1. Check hotbar slot selection
+        // 1. Check hotbar slot selection (visible 9 slots)
         val slots = hotbarSlotRects
         for (i in slots.indices) {
             if (slots[i].contains(x, y)) {
@@ -1544,6 +1651,12 @@ class TexturedUiRenderer(
                 invalidateHud()
                 return true
             }
+        }
+
+        // 1.5. Invisible 10th-slot hitbox (immediately to the right of slot 8 in WORLD mode)
+        if (isWorld && !inventoryHotspotRect.isEmpty && inventoryHotspotRect.contains(x, y)) {
+            activeInventoryHotspotPointerId = pointerId
+            return true
         }
 
         // 2. Top-right MENU button (returns to Main Menu)

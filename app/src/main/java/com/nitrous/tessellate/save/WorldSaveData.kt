@@ -33,7 +33,7 @@ data class WorldSaveData(
     val playerYaw: Float,
     val playerPitch: Float,
     val selectedSlot: Int = 0,
-    val hotbar: List<SavedHotbarSlot> = List(Inventory.HOTBAR_SIZE) { SavedHotbarSlot(slot = it) },
+    val hotbar: List<SavedHotbarSlot> = List(Inventory.TOTAL_SIZE) { SavedHotbarSlot(slot = it) },
     val folderName: String = "",
     val lastSavedEpochMs: Long = 0L
 ) {

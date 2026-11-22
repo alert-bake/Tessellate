@@ -12,22 +12,25 @@ data class ItemStack(
 )
 
 /**
- * Player 9-slot hotbar inventory managing stacked [ItemStack] entries and active slot selection.
+ * Player inventory managing stacked [ItemStack] entries (slots 0..8 = hotbar, 9..35 = 27-slot main inventory)
+ * and active hotbar slot selection. Default size remains [HOTBAR_SIZE] (9) for standalone hotbar usage.
  */
 class Inventory(
     val size: Int = HOTBAR_SIZE
 ) {
     private val lock = Any()
     private val slots = arrayOfNulls<ItemStack>(size)
+    private val maxHotbarIndex: Int
+        get() = (minOf(HOTBAR_SIZE, size) - 1).coerceAtLeast(0)
 
     @Volatile
     var selectedSlot: Int = 0
         set(value) {
-            field = value.coerceIn(0, size - 1)
+            field = value.coerceIn(0, maxHotbarIndex)
         }
 
     fun selectSlot(index: Int): Boolean {
-        if (index !in 0 until size) return false
+        if (index !in 0..maxHotbarIndex) return false
         selectedSlot = index
         return true
     }
@@ -44,6 +47,36 @@ class Inventory(
 
     fun getSelectedStack(): ItemStack? = synchronized(lock) {
         getSlot(selectedSlot)
+    }
+
+    /**
+     * Checks whether [amount] of [itemId] can fit cleanly into existing matching stacks or empty slots
+     * without modifying the inventory.
+     */
+    fun canFit(itemId: String, amount: Int = 1): Boolean = synchronized(lock) {
+        if (amount <= 0) return true
+        if (itemId.isBlank()) return false
+
+        val registered = ItemRegistry.get(itemId)
+        val canonicalId = registered?.identifier?.toCanonicalString() ?: itemId
+        val maxStack = (registered?.maxStackSize ?: DEFAULT_MAX_STACK).coerceAtLeast(1)
+        val normalizedTarget = normalizeId(canonicalId)
+
+        var remaining = amount
+        for (i in 0 until size) {
+            val existing = slots[i] ?: continue
+            if (normalizeId(existing.itemId) == normalizedTarget && existing.count < maxStack) {
+                remaining -= (maxStack - existing.count)
+                if (remaining <= 0) return true
+            }
+        }
+        for (i in 0 until size) {
+            if (slots[i] == null) {
+                remaining -= maxStack
+                if (remaining <= 0) return true
+            }
+        }
+        return remaining <= 0
     }
 
     /**
@@ -111,6 +144,8 @@ class Inventory(
 
     companion object {
         const val HOTBAR_SIZE = 9
+        const val MAIN_INVENTORY_SIZE = 27
+        const val TOTAL_SIZE = HOTBAR_SIZE + MAIN_INVENTORY_SIZE
         const val DEFAULT_MAX_STACK = 64
     }
 }

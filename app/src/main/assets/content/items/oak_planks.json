@@ -1,0 +1,7 @@
+{
+  "id": "tessellate:oak_planks",
+  "display_name": "Oak Planks",
+  "max_stack_size": 64,
+  "item_type": "BLOCK",
+  "block_id": "tessellate:oak_planks"
+}

@@ -253,6 +253,15 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
                         val hole = ((x + y * 3) % 7 == 0) && ((x * y) % 3 == 0)
                         if (hole) Color.argb(175, 42, 118, 36) else Color.argb(245, 58, 148, 44)
                     }
+                    TextureConstants.BLOCK_OAK_PLANKS -> {
+                        val seamH = (y % 4 == 0)
+                        val seamV = ((x + (y / 4) * 8) % 16 == 0)
+                        when {
+                            seamH || seamV -> Color.rgb(138, 102, 56)
+                            ((x * 3 + y) % 7 == 0) -> Color.rgb(176, 134, 78)
+                            else -> Color.rgb(194, 152, 92)
+                        }
+                    }
                     else -> Color.rgb(128, 128, 128)
                 }
                 bitmap.setPixel(x, y, color)
@@ -381,6 +390,24 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
                 uploadBitmapToGl(bitmap, filterMode)
             }
             textureHandles[id] = handle
+        }
+
+        // Upload standalone procedural block tiles so 2D hotbar & inventory icons match world blocks
+        for ((id, _) in PROCEDURAL_ATLAS_TILES) {
+            if (!textureHandles.containsKey(id)) {
+                val procBitmap = createProceduralBlockTile(id)
+                val handle = uploadUiBitmapToGl(procBitmap)
+                procBitmap.recycle()
+                if (handle != 0) {
+                    textureHandles[id] = handle
+                    diagnostics[id] = TextureDiagnostic(
+                        textureId = id,
+                        isSuccess = true,
+                        isFallback = false,
+                        message = "Generated procedural 16x16 UI tile for $id"
+                    )
+                }
+            }
         }
 
         buildAtlas()
@@ -558,7 +585,8 @@ class TexturePipeline(private val context: Context) : ITexturePipeline {
 
         val PROCEDURAL_ATLAS_TILES: List<Pair<String, Pair<Int, Int>>> = listOf(
             TextureConstants.BLOCK_OAK_LOG to Pair(1, 2),
-            TextureConstants.BLOCK_LEAVES to Pair(2, 2)
+            TextureConstants.BLOCK_LEAVES to Pair(2, 2),
+            TextureConstants.BLOCK_OAK_PLANKS to Pair(3, 2)
         )
     }
 }

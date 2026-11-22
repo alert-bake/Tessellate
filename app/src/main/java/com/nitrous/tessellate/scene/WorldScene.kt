@@ -228,7 +228,7 @@ class WorldScene : IGameScene {
         player.inventory.clear()
         for (entry in saveData.hotbar) {
             val itemId = entry.itemId
-            if (entry.slot in 0 until Inventory.HOTBAR_SIZE && !itemId.isNullOrBlank() && entry.count > 0) {
+            if (entry.slot in 0 until player.inventory.size && !itemId.isNullOrBlank() && entry.count > 0) {
                 player.inventory.setSlot(entry.slot, ItemStack(itemId, entry.count))
             }
         }
@@ -247,11 +247,11 @@ class WorldScene : IGameScene {
     }
 
     /**
-     * Captures current world session, player transform, and all 9 hotbar slots into [WorldSaveData].
+     * Captures current world session, player transform, and all inventory slots into [WorldSaveData].
      */
     fun buildWorldSaveData(): WorldSaveData? {
         val session = currentSession ?: return null
-        val hotbarList = ArrayList<SavedHotbarSlot>(Inventory.HOTBAR_SIZE)
+        val hotbarList = ArrayList<SavedHotbarSlot>(player.inventory.size)
         for (i in 0 until player.inventory.size) {
             val stack = player.inventory.getSlot(i)
             hotbarList.add(

@@ -295,8 +295,8 @@ class Tdd017OptimizationPassTest {
         scene.worldRenderer.updateMeshes(pipeline, uploadToGpu = false)
         assertEquals(0, scene.worldRenderer.getChunkMeshes().count { it.chunk.needsMeshRebuild })
 
-        // Acceptance Test 3: Spawn item drop, walk > 4 chunks away, check profiler shows 0 ticked & 1 asleep
-        val drop = ItemDropEntity(Vec3(scene.player.posX, scene.player.posY + 1f, scene.player.posZ))
+        // Acceptance Test 3: Spawn item drop nearby (outside pickup range), walk > 4 chunks away, check profiler shows 0 ticked & 1 asleep
+        val drop = ItemDropEntity(Vec3(scene.player.posX + 5f, scene.player.posY + 1f, scene.player.posZ))
         scene.world.spawnEntity(drop)
 
         scene.update(0.016f)

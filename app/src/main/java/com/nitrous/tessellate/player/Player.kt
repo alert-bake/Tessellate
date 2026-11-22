@@ -17,8 +17,8 @@ class Player(
     var posY: Float = 20.0f,
     var posZ: Float = 24.5f
 ) {
-    /** 9-slot hotbar inventory. */
-    val inventory = Inventory()
+    /** 36-slot player inventory (0..8 hotbar, 9..35 main inventory). */
+    val inventory = Inventory(size = Inventory.TOTAL_SIZE)
 
     // Camera Look Orientation
     @Volatile

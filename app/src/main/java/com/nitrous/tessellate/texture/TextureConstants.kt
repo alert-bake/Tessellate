@@ -18,6 +18,7 @@ object TextureConstants {
     const val BLOCK_STONE = "block_stone"
     const val BLOCK_OAK_LOG = "block_oak_log"
     const val BLOCK_LEAVES = "block_leaves"
+    const val BLOCK_OAK_PLANKS = "block_oak_planks"
 
     // On-screen directional D-pad and action controller textures (128x128)
     const val PROTO_BASE_CONTR = "proto_base_contr"
@@ -28,8 +29,9 @@ object TextureConstants {
     const val PROTO_CONTR_CROUCH = "proto_contr_crouch"
     const val PROTO_CONTR_JUMP = "proto_contr_jump"
 
-    // GUI widget atlas and bitmap font sheet (Nearest-Neighbor)
+    // GUI widget atlas, inventory GUI texture, and bitmap font sheet (Nearest-Neighbor)
     const val UI_GUI_WIDGETS = "UI_gui_widgets"
+    const val UI_GUI_INVENTORY = "UI_gui_inventory"
     const val UI_FONT_ASCII = "UI_font_ascii"
 
     val ALL_PROTOTYPE_IDS = listOf(
@@ -59,6 +61,7 @@ object TextureConstants {
 
     val ALL_UI_IDS = listOf(
         UI_GUI_WIDGETS,
+        UI_GUI_INVENTORY,
         UI_FONT_ASCII
     )
 
@@ -80,8 +83,10 @@ object TextureConstants {
         BLOCK_STONE -> "Stone block"
         BLOCK_OAK_LOG -> "Oak log bark block"
         BLOCK_LEAVES -> "Oak leaves canopy block"
+        BLOCK_OAK_PLANKS -> "Oak planks wooden block"
         PROTO_CONTR_JUMP -> "Jump button controller texture"
         UI_GUI_WIDGETS -> "UI widgets texture atlas"
+        UI_GUI_INVENTORY -> "Inventory & crafting GUI texture atlas"
         UI_FONT_ASCII -> "Data-driven UI bitmap font atlas"
         else -> "Custom / Unknown texture"
     }

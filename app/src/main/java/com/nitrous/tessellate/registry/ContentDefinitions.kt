@@ -86,3 +86,29 @@ data class StructoidDefinitionJson(
     @Json(name = "noise_frequency") val noiseFrequency: Float = 0.1f,
     @Json(name = "carve_all") val carveAll: Boolean = false
 )
+
+/**
+ * JSON schema for a single ingredient in a crafting recipe (`assets/content/recipes/`).
+ */
+data class RecipeIngredientJson(
+    val item: String,
+    val count: Int = 1
+)
+
+/**
+ * JSON schema for the crafted output stack in a recipe (`assets/content/recipes/`).
+ */
+data class RecipeResultJson(
+    val item: String,
+    val count: Int = 1
+)
+
+/**
+ * JSON schema for shapeless crafting recipes (`assets/content/recipes/`).
+ */
+data class RecipeDefinitionJson(
+    val id: String,
+    val ingredients: List<RecipeIngredientJson> = emptyList(),
+    val result: RecipeResultJson
+)
+

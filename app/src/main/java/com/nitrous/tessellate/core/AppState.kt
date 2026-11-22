@@ -8,6 +8,7 @@ enum class AppState {
     WORLD_SELECT,
     CREATE_WORLD,
     PLAYING,
+    INVENTORY,
     SETTINGS,
     DEBUG_OPTIONS
 }

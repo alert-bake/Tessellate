@@ -266,13 +266,18 @@ class TessellateEngine(
 
     fun setAppState(newState: AppState) {
         var pauseChanged = false
+        var leftInventory = false
         synchronized(modeLock) {
             if (currentAppState == newState) return
             if (newState == AppState.DEBUG_OPTIONS && !currentSettings.enableDebugOptions) {
                 return
             }
+            if (currentAppState == AppState.INVENTORY && newState != AppState.INVENTORY) {
+                leftInventory = true
+            }
             currentAppState = newState
             if (newState != AppState.PLAYING &&
+                newState != AppState.INVENTORY &&
                 newState != AppState.SETTINGS &&
                 newState != AppState.DEBUG_OPTIONS &&
                 isPaused
@@ -286,11 +291,44 @@ class TessellateEngine(
                 lastFrameTimeNs = 0L
             }
         }
+        if (leftInventory) {
+            uiRenderer.inventoryScreen.returnAllItemsAndReset()
+        }
         if (pauseChanged) {
             onPauseStateChanged?.invoke(false)
         }
         onAppStateChanged?.invoke(newState)
         Log.i(TAG, "Switched AppState to: $newState")
+    }
+
+    fun openInventory() {
+        synchronized(modeLock) {
+            if (currentAppState != AppState.PLAYING || isPaused || currentSceneMode != SceneMode.WORLD) {
+                return
+            }
+            currentAppState = AppState.INVENTORY
+            touchController.resetAllInputs()
+            uiRenderer.onAppStateChanged(AppState.INVENTORY)
+        }
+        onAppStateChanged?.invoke(AppState.INVENTORY)
+        Log.i(TAG, "Opened Inventory -> AppState.INVENTORY")
+    }
+
+    fun closeInventory() {
+        var closed = false
+        synchronized(modeLock) {
+            if (currentAppState != AppState.INVENTORY) return
+            currentAppState = AppState.PLAYING
+            lastFrameTimeNs = 0L
+            touchController.resetAllInputs()
+            uiRenderer.onAppStateChanged(AppState.PLAYING)
+            closed = true
+        }
+        if (closed) {
+            uiRenderer.inventoryScreen.returnAllItemsAndReset()
+            onAppStateChanged?.invoke(AppState.PLAYING)
+            Log.i(TAG, "Closed Inventory -> AppState.PLAYING")
+        }
     }
 
     fun setPaused(paused: Boolean) {
@@ -525,6 +563,18 @@ class TessellateEngine(
             framePaused = isPaused
         }
 
+        if (frameAppState == AppState.INVENTORY) {
+            // Pause 3D world physics/ticking while rendering the frozen 3D world behind the inventory overlay
+            backend.clear(0.45f, 0.65f, 1.0f, 1.0f)
+            when (frameMode) {
+                SceneMode.WORLD -> worldScene.render(this)
+                SceneMode.SHOWCASE -> showcaseScene.render(this)
+            }
+            uiRenderer.renderUi(this, frameMode, AppState.INVENTORY, isPaused = false)
+            applyFrameRateCap(gl, frameStartNs)
+            return
+        }
+
         if (frameAppState != AppState.PLAYING) {
             // Pause 3D world physics/ticking and render 2D UI over a solid background color
             backend.clear(0.09f, 0.11f, 0.14f, 1.0f)
@@ -577,6 +627,10 @@ class TessellateEngine(
     fun onTouchEvent(event: MotionEvent): Boolean {
         val state = currentAppState
         val paused = isPaused
+
+        if (state == AppState.INVENTORY) {
+            return uiRenderer.onInventoryTouchEvent(event)
+        }
 
         // Route menu screens & pause overlay directly through TouchInputController
         if (state != AppState.PLAYING || paused) {
@@ -663,7 +717,7 @@ class TessellateEngine(
     override fun onPause() {
         Log.i(TAG, "TessellateEngine: onPause")
         touchController.resetAllInputs()
-        if (currentAppState == AppState.PLAYING) {
+        if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
             worldScene.saveCurrentWorld(blocking = false)
         }
     }
@@ -676,7 +730,10 @@ class TessellateEngine(
     override fun onDestroy() {
         Log.i(TAG, "TessellateEngine: onDestroy - Releasing resources")
         touchController.resetAllInputs()
-        if (currentAppState == AppState.PLAYING) {
+        if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
+            if (currentAppState == AppState.INVENTORY) {
+                uiRenderer.inventoryScreen.returnAllItemsAndReset()
+            }
             worldScene.saveCurrentWorld(blocking = true)
         }
         worldScene.release()

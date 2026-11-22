@@ -32,12 +32,17 @@ object GameRegistries {
     val ITEMS: IContentRegistry<Item>
         get() = ItemRegistry.internalRegistry
 
+    /** Global Recipe Registry delegating to [RecipeRegistry] */
+    val RECIPES: IContentRegistry<com.nitrous.tessellate.item.CraftingRecipe>
+        get() = com.nitrous.tessellate.item.RecipeRegistry.internalRegistry
+
     /**
      * Freezes all core game registries.
      */
     fun freezeAll() {
         BlockRegistry.freeze()
         ItemRegistry.internalRegistry.freeze()
+        com.nitrous.tessellate.item.RecipeRegistry.freeze()
         com.nitrous.tessellate.worldgen.WorldGenRegistry.freeze()
         com.nitrous.tessellate.command.CommandRegistry.freeze()
     }

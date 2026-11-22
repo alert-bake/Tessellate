@@ -4,9 +4,12 @@ import android.content.Context
 import com.nitrous.tessellate.command.CommandRegistry
 import com.nitrous.tessellate.command.JsonCommand
 import com.nitrous.tessellate.item.BlockItem
+import com.nitrous.tessellate.item.CraftingRecipe
 import com.nitrous.tessellate.item.Item
 import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.item.ItemType
+import com.nitrous.tessellate.item.RecipeIngredient
+import com.nitrous.tessellate.item.RecipeRegistry
 import com.nitrous.tessellate.world.BlockRegistry
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.worldgen.DataDrivenWorldGenPass
@@ -35,6 +38,7 @@ object RegistryBootstrap {
 
     private const val ASSETS_BLOCKS_DIR = "content/blocks"
     private const val ASSETS_ITEMS_DIR = "content/items"
+    private const val ASSETS_RECIPES_DIR = "content/recipes"
     private const val ASSETS_COMMANDS_DIR = "content/commands"
     private const val ASSETS_WORLDGEN_PASSES_DIR = "content/worldgen/passes"
     private const val ASSETS_STRUCTOIDS_DIR = "content/worldgen/structoids"
@@ -53,6 +57,7 @@ object RegistryBootstrap {
 
     private val blockAdapter = moshi.adapter(BlockDefinitionJson::class.java)
     private val itemAdapter = moshi.adapter(ItemDefinitionJson::class.java)
+    private val recipeAdapter = moshi.adapter(RecipeDefinitionJson::class.java)
     private val commandAdapter = moshi.adapter(CommandDefinitionJson::class.java)
     private val worldGenPassAdapter = moshi.adapter(WorldGenPassDefinitionJson::class.java)
     private val structoidAdapter = moshi.adapter(StructoidDefinitionJson::class.java)
@@ -73,6 +78,7 @@ object RegistryBootstrap {
                     modContentDirs = emptyList(),
                     extraBlockJsons = emptyList(),
                     extraItemJsons = emptyList(),
+                    extraRecipeJsons = emptyList(),
                     extraCommandJsons = emptyList(),
                     extraWorldGenPassJsons = emptyList(),
                     extraStructoidJsons = emptyList(),
@@ -86,7 +92,7 @@ object RegistryBootstrap {
      * Executes the complete startup registration pipeline:
      * 1. Initialize registries
      * 2. Load JSON content definitions (base assets + optional mod directories / extra JSONs)
-     * 3. Resolve relationships & wire vanilla + mod worldgen passes + commands
+     * 3. Resolve relationships & wire vanilla + mod recipes + worldgen passes + commands
      * 4. Run optional pre-freeze hook & freeze registries
      */
     fun initialize(
@@ -94,6 +100,7 @@ object RegistryBootstrap {
         modContentDirs: List<File> = emptyList(),
         extraBlockJsons: List<String> = emptyList(),
         extraItemJsons: List<String> = emptyList(),
+        extraRecipeJsons: List<String> = emptyList(),
         extraCommandJsons: List<String> = emptyList(),
         extraWorldGenPassJsons: List<String> = emptyList(),
         extraStructoidJsons: List<String> = emptyList(),
@@ -105,9 +112,9 @@ object RegistryBootstrap {
             val modsChanged = context != null && contextModSignature != lastLoadedModSignature
             if (state == State.INITIALIZED && !forceReinitialize && !modsChanged &&
                 modContentDirs.isEmpty() && extraBlockJsons.isEmpty() &&
-                extraItemJsons.isEmpty() && extraCommandJsons.isEmpty() &&
-                extraWorldGenPassJsons.isEmpty() && extraStructoidJsons.isEmpty() &&
-                preFreezeHook == null
+                extraItemJsons.isEmpty() && extraRecipeJsons.isEmpty() &&
+                extraCommandJsons.isEmpty() && extraWorldGenPassJsons.isEmpty() &&
+                extraStructoidJsons.isEmpty() && preFreezeHook == null
             ) {
                 return
             }
@@ -116,6 +123,7 @@ object RegistryBootstrap {
                 modContentDirs = modContentDirs,
                 extraBlockJsons = extraBlockJsons,
                 extraItemJsons = extraItemJsons,
+                extraRecipeJsons = extraRecipeJsons,
                 extraCommandJsons = extraCommandJsons,
                 extraWorldGenPassJsons = extraWorldGenPassJsons,
                 extraStructoidJsons = extraStructoidJsons,
@@ -131,6 +139,7 @@ object RegistryBootstrap {
         val subDirs = listOf(
             "B" to File(userModDir, "blocks"),
             "I" to File(userModDir, "items"),
+            "R" to File(userModDir, "recipes"),
             "C" to File(userModDir, "commands"),
             "P" to File(userModDir, "worldgen/passes"),
             "S" to File(userModDir, "worldgen/structoids")
@@ -152,6 +161,7 @@ object RegistryBootstrap {
         modContentDirs: List<File>,
         extraBlockJsons: List<String>,
         extraItemJsons: List<String>,
+        extraRecipeJsons: List<String>,
         extraCommandJsons: List<String>,
         extraWorldGenPassJsons: List<String>,
         extraStructoidJsons: List<String>,
@@ -162,6 +172,7 @@ object RegistryBootstrap {
             // 1. Initialize registries
             BlockRegistry.clearForBootstrap()
             ItemRegistry.clearForBootstrap()
+            RecipeRegistry.clearForBootstrap()
             WorldGenRegistry.clearForBootstrap()
             CommandRegistry.clearForBootstrap()
 
@@ -179,6 +190,7 @@ object RegistryBootstrap {
             // 2. Load JSON content definitions
             val blockDefs = loadBlockDefinitions(context, effectiveModDirs, extraBlockJsons)
             val itemDefs = loadItemDefinitions(context, effectiveModDirs, extraItemJsons)
+            val recipeDefs = loadRecipeDefinitions(context, effectiveModDirs, extraRecipeJsons)
             val commandDefs = loadCommandDefinitions(context, effectiveModDirs, extraCommandJsons)
             val passDefs = loadWorldGenPassDefinitions(context, effectiveModDirs, extraWorldGenPassJsons)
             val structoidDefs = loadStructoidDefinitions(context, effectiveModDirs, extraStructoidJsons)
@@ -189,9 +201,12 @@ object RegistryBootstrap {
                 registerBlockDefinition(def)
             }
 
-            // 3. Resolve relationships (link items -> registered BlockType)
+            // 3. Resolve relationships (link items -> registered BlockType, recipes -> registered Items)
             for (def in itemDefs) {
                 registerItemDefinition(def)
+            }
+            for (def in recipeDefs) {
+                registerRecipeDefinition(def)
             }
 
             // Register vanilla + mod worldgen passes, structoids, and commands before freezing
@@ -223,6 +238,7 @@ object RegistryBootstrap {
             // 4. Freeze all registries
             BlockRegistry.freeze()
             ItemRegistry.freeze()
+            RecipeRegistry.freeze()
             WorldGenRegistry.freeze()
             CommandRegistry.freeze()
             lastLoadedModSignature = computeContextModSignature(context)
@@ -258,6 +274,17 @@ object RegistryBootstrap {
         }
         return sources.map { (name, json) ->
             parseJson(name, json, itemAdapter, "item definition")
+        }
+    }
+
+    private fun loadRecipeDefinitions(
+        context: Context?,
+        modContentDirs: List<File>,
+        extraRecipeJsons: List<String>
+    ): List<RecipeDefinitionJson> {
+        val sources = collectJsonSources(context, ASSETS_RECIPES_DIR, modContentDirs, "recipes", extraRecipeJsons)
+        return sources.map { (name, json) ->
+            parseJson(name, json, recipeAdapter, "recipe definition")
         }
     }
 
@@ -390,6 +417,35 @@ object RegistryBootstrap {
         }
 
         ItemRegistry.register(item)
+    }
+
+    private fun registerRecipeDefinition(def: RecipeDefinitionJson) {
+        val identifier = Identifier.parse(def.id)
+        if (def.ingredients.isEmpty()) {
+            throw ContentLoadException("Recipe '${def.id}' must declare at least one ingredient")
+        }
+        val resolvedIngredients = def.ingredients.map { ing ->
+            val registered = ItemRegistry.internalRegistry.get(ing.item)
+                ?: throw ContentLoadException("Recipe '${def.id}' references unknown ingredient item '${ing.item}'")
+            val count = ing.count.coerceAtLeast(1)
+            RecipeIngredient(
+                itemId = registered.identifier.toCanonicalString(),
+                normalizedItemId = registered.identifier.normalizedString,
+                count = count
+            )
+        }
+        val resultItem = ItemRegistry.internalRegistry.get(def.result.item)
+            ?: throw ContentLoadException("Recipe '${def.id}' references unknown result item '${def.result.item}'")
+        val resultCount = def.result.count.coerceAtLeast(1)
+
+        RecipeRegistry.register(
+            CraftingRecipe(
+                identifier = identifier,
+                ingredients = resolvedIngredients,
+                resultItemId = resultItem.identifier.toCanonicalString(),
+                resultCount = resultCount
+            )
+        )
     }
 
     private fun parseItemType(raw: String?, hasBlock: Boolean): ItemType {

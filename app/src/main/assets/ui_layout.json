@@ -36,5 +36,67 @@
     },
     "sliceU": 0.01171875,
     "sliceV": 0.01171875
+  },
+  "inventory": {
+    "panelWidth": 176,
+    "panelHeight": 166,
+    "panel": {
+      "u1": 0.0,
+      "v1": 0.0,
+      "u2": 0.6875,
+      "v2": 0.6484375
+    },
+    "slot": {
+      "u1": 0.02734375,
+      "v1": 0.32421875,
+      "u2": 0.09765625,
+      "v2": 0.39453125
+    },
+    "panelFill": {
+      "u1": 0.546875,
+      "v1": 0.1953125,
+      "u2": 0.65625,
+      "v2": 0.296875
+    },
+    "craftingPatch": {
+      "x": 94,
+      "y": 14,
+      "width": 40,
+      "height": 42
+    },
+    "craftingGrid": {
+      "startX": 78,
+      "startY": 6,
+      "slotStride": 18,
+      "innerInset": 1,
+      "innerSize": 16,
+      "cols": 3,
+      "rows": 3
+    },
+    "craftingOutput": {
+      "x": 153,
+      "y": 27,
+      "slotSize": 18,
+      "innerInset": 1,
+      "innerSize": 16
+    },
+    "mainInventory": {
+      "startX": 7,
+      "startY": 83,
+      "slotStride": 18,
+      "innerInset": 1,
+      "innerSize": 16,
+      "cols": 9,
+      "rows": 3
+    },
+    "hotbar": {
+      "startX": 7,
+      "startY": 141,
+      "slotStride": 18,
+      "innerInset": 1,
+      "innerSize": 16,
+      "cols": 9,
+      "rows": 1
+    }
   }
 }

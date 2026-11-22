@@ -557,6 +557,10 @@ class MainActivity : ComponentActivity() {
                     engine.setPaused(!engine.isPaused)
                     return
                 }
+                AppState.INVENTORY -> {
+                    engine.closeInventory()
+                    return
+                }
                 AppState.MENU -> Unit
             }
         }
@@ -596,7 +600,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         val engine = surfaceView?.engine
-        if (engine != null && engine.currentAppState == AppState.PLAYING) {
+        if (engine != null && (engine.currentAppState == AppState.PLAYING || engine.currentAppState == AppState.INVENTORY)) {
+            if (engine.currentAppState == AppState.INVENTORY) {
+                engine.uiRenderer.inventoryScreen.returnAllItemsAndReset()
+            }
             engine.worldScene.saveCurrentWorld(blocking = true)
         }
         surfaceView?.handleDestroy()

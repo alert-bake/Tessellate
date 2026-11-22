@@ -42,12 +42,75 @@ data class ButtonUiLayout(
 )
 
 /**
+ * Pixel region inside the inventory panel sprite (in texture/panel pixels).
+ */
+@JsonClass(generateAdapter = true)
+data class InventoryPatchSpec(
+    val x: Float = 94f,
+    val y: Float = 14f,
+    val width: Float = 40f,
+    val height: Float = 42f
+)
+
+/**
+ * Grid layout specification for inventory slot grids in texture/panel pixels.
+ */
+@JsonClass(generateAdapter = true)
+data class InventoryGridSpec(
+    val startX: Float = 7f,
+    val startY: Float = 83f,
+    val slotStride: Float = 18f,
+    val innerInset: Float = 1f,
+    val innerSize: Float = 16f,
+    val cols: Int = 9,
+    val rows: Int = 3
+)
+
+/**
+ * Single slot coordinate specification in texture/panel pixels.
+ */
+@JsonClass(generateAdapter = true)
+data class InventorySlotSpec(
+    val x: Float = 153f,
+    val y: Float = 27f,
+    val slotSize: Float = 18f,
+    val innerInset: Float = 1f,
+    val innerSize: Float = 16f
+)
+
+/**
+ * Data-driven Inventory GUI layout & UVs mapping `UI_gui_inventory.png` (256x256).
+ */
+@JsonClass(generateAdapter = true)
+data class InventoryUiLayout(
+    val panelWidth: Float = 176f,
+    val panelHeight: Float = 166f,
+    val panel: UiUvRect = UiUvRect(0.0f, 0.0f, 0.6875f, 0.6484375f),
+    val slot: UiUvRect = UiUvRect(0.02734375f, 0.32421875f, 0.09765625f, 0.39453125f),
+    val panelFill: UiUvRect = UiUvRect(0.546875f, 0.1953125f, 0.65625f, 0.296875f),
+    val craftingPatch: InventoryPatchSpec = InventoryPatchSpec(94f, 14f, 40f, 42f),
+    val craftingGrid: InventoryGridSpec = InventoryGridSpec(
+        startX = 78f, startY = 6f, slotStride = 18f, innerInset = 1f, innerSize = 16f, cols = 3, rows = 3
+    ),
+    val craftingOutput: InventorySlotSpec = InventorySlotSpec(
+        x = 153f, y = 27f, slotSize = 18f, innerInset = 1f, innerSize = 16f
+    ),
+    val mainInventory: InventoryGridSpec = InventoryGridSpec(
+        startX = 7f, startY = 83f, slotStride = 18f, innerInset = 1f, innerSize = 16f, cols = 9, rows = 3
+    ),
+    val hotbar: InventoryGridSpec = InventoryGridSpec(
+        startX = 7f, startY = 141f, slotStride = 18f, innerInset = 1f, innerSize = 16f, cols = 9, rows = 1
+    )
+)
+
+/**
  * Root data-driven UI definition parsed from ui_layout.json.
  */
 @JsonClass(generateAdapter = true)
 data class UiLayoutConfig(
     val hotbar: HotbarUiLayout = HotbarUiLayout(),
-    val buttons: ButtonUiLayout = ButtonUiLayout()
+    val buttons: ButtonUiLayout = ButtonUiLayout(),
+    val inventory: InventoryUiLayout = InventoryUiLayout()
 )
 
 /**
@@ -112,6 +175,34 @@ object UiLayoutLoader {
         val bsu = if (config.buttons.sliceU.isFinite()) config.buttons.sliceU.coerceIn(0f, btnSpanU * 0.45f) else btnDefaults.sliceU
         val bsv = if (config.buttons.sliceV.isFinite()) config.buttons.sliceV.coerceIn(0f, btnSpanV * 0.45f) else btnDefaults.sliceV
 
+        val invDefaults = InventoryUiLayout()
+        val inv = config.inventory
+        val panelW = if (inv.panelWidth.isFinite() && inv.panelWidth > 16f) inv.panelWidth else invDefaults.panelWidth
+        val panelH = if (inv.panelHeight.isFinite() && inv.panelHeight > 16f) inv.panelHeight else invDefaults.panelHeight
+        val sanitizedInv = InventoryUiLayout(
+            panelWidth = panelW,
+            panelHeight = panelH,
+            panel = sanitizeRect(inv.panel, invDefaults.panel),
+            slot = sanitizeRect(inv.slot, invDefaults.slot),
+            panelFill = sanitizeRect(inv.panelFill, invDefaults.panelFill),
+            craftingPatch = InventoryPatchSpec(
+                x = if (inv.craftingPatch.x.isFinite()) inv.craftingPatch.x else invDefaults.craftingPatch.x,
+                y = if (inv.craftingPatch.y.isFinite()) inv.craftingPatch.y else invDefaults.craftingPatch.y,
+                width = if (inv.craftingPatch.width.isFinite() && inv.craftingPatch.width >= 0f) inv.craftingPatch.width else invDefaults.craftingPatch.width,
+                height = if (inv.craftingPatch.height.isFinite() && inv.craftingPatch.height >= 0f) inv.craftingPatch.height else invDefaults.craftingPatch.height
+            ),
+            craftingGrid = sanitizeGrid(inv.craftingGrid, invDefaults.craftingGrid),
+            craftingOutput = InventorySlotSpec(
+                x = if (inv.craftingOutput.x.isFinite()) inv.craftingOutput.x else invDefaults.craftingOutput.x,
+                y = if (inv.craftingOutput.y.isFinite()) inv.craftingOutput.y else invDefaults.craftingOutput.y,
+                slotSize = if (inv.craftingOutput.slotSize.isFinite() && inv.craftingOutput.slotSize > 2f) inv.craftingOutput.slotSize else invDefaults.craftingOutput.slotSize,
+                innerInset = if (inv.craftingOutput.innerInset.isFinite() && inv.craftingOutput.innerInset >= 0f) inv.craftingOutput.innerInset else invDefaults.craftingOutput.innerInset,
+                innerSize = if (inv.craftingOutput.innerSize.isFinite() && inv.craftingOutput.innerSize > 2f) inv.craftingOutput.innerSize else invDefaults.craftingOutput.innerSize
+            ),
+            mainInventory = sanitizeGrid(inv.mainInventory, invDefaults.mainInventory),
+            hotbar = sanitizeGrid(inv.hotbar, invDefaults.hotbar)
+        )
+
         return UiLayoutConfig(
             hotbar = HotbarUiLayout(
                 background = bg,
@@ -125,7 +216,20 @@ object UiLayoutLoader {
                 hovered = hov,
                 sliceU = bsu,
                 sliceV = bsv
-            )
+            ),
+            inventory = sanitizedInv
+        )
+    }
+
+    private fun sanitizeGrid(grid: InventoryGridSpec, fallback: InventoryGridSpec): InventoryGridSpec {
+        return InventoryGridSpec(
+            startX = if (grid.startX.isFinite()) grid.startX else fallback.startX,
+            startY = if (grid.startY.isFinite()) grid.startY else fallback.startY,
+            slotStride = if (grid.slotStride.isFinite() && grid.slotStride > 2f) grid.slotStride else fallback.slotStride,
+            innerInset = if (grid.innerInset.isFinite() && grid.innerInset >= 0f) grid.innerInset else fallback.innerInset,
+            innerSize = if (grid.innerSize.isFinite() && grid.innerSize > 2f) grid.innerSize else fallback.innerSize,
+            cols = grid.cols.coerceIn(1, 18),
+            rows = grid.rows.coerceIn(1, 9)
         )
     }
 
