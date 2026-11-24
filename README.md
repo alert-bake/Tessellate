@@ -9,6 +9,8 @@
 
 **Tessellate** is a Kotlin Multiplatform voxel sandbox project targeting **Android and Windows**. It is built around a custom Kotlin engine and an OpenGL ES 3.0 renderer, with an evolving focus on procedural worlds, block-based building, data-driven content, and modded-sandbox foundations.
 
+> **We MIGHT mog Minecraft, but no promises.**
+>
 > Tesselate was never real, trust frfr.
 
 ## Project status
