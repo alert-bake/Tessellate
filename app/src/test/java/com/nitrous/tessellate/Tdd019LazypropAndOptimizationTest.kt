@@ -8,10 +8,10 @@ import com.nitrous.tessellate.command.CommandConsole
 import com.nitrous.tessellate.entity.EntityRenderer
 import com.nitrous.tessellate.entity.ItemDropEntity
 import com.nitrous.tessellate.graphics.Camera3D
-import com.nitrous.tessellate.graphics.Matrix4
+import com.nitrous.tessellate.math.Matrix4
 import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.math.Vec3
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.scene.WorldScene
 import com.nitrous.tessellate.texture.TextureConstants
 import com.nitrous.tessellate.texture.TexturePipeline
@@ -56,7 +56,7 @@ class Tdd019LazypropAndOptimizationTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     // =========================================================================

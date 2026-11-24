@@ -1,8 +1,5 @@
 package com.nitrous.tessellate.registry
 
-import android.content.Context
-import com.nitrous.tessellate.command.CommandRegistry
-import com.nitrous.tessellate.command.JsonCommand
 import com.nitrous.tessellate.item.BlockItem
 import com.nitrous.tessellate.item.CraftingRecipe
 import com.nitrous.tessellate.item.Item
@@ -65,16 +62,34 @@ object RegistryBootstrap {
     val isInitialized: Boolean
         get() = state == State.INITIALIZED
 
+    @Volatile
+    private var defaultAssetSource: ContentAssetSource? = null
+
+    @Volatile
+    private var commandDelegate: CommandBootstrapDelegate? = null
+
+    fun setDefaultAssetSource(assetSource: ContentAssetSource?) {
+        defaultAssetSource = assetSource
+    }
+
+    fun setCommandDelegate(delegate: CommandBootstrapDelegate?) {
+        commandDelegate = delegate
+    }
+
+    fun freezeCommandDelegate() {
+        commandDelegate?.freeze()
+    }
+
     /**
      * Ensures the bootstrap pipeline has run once cleanly.
      * Safe for standalone unit tests or code accessing registries before `TessellateEngine`.
      */
-    fun ensureInitialized(context: Context? = null) {
+    fun ensureInitialized(assetSource: ContentAssetSource? = defaultAssetSource) {
         if (state != State.UNINITIALIZED) return
         synchronized(bootstrapLock) {
             if (state == State.UNINITIALIZED) {
                 initializeInternal(
-                    context = context,
+                    assetSource = assetSource ?: defaultAssetSource,
                     modContentDirs = emptyList(),
                     extraBlockJsons = emptyList(),
                     extraItemJsons = emptyList(),
@@ -96,7 +111,7 @@ object RegistryBootstrap {
      * 4. Run optional pre-freeze hook & freeze registries
      */
     fun initialize(
-        context: Context? = null,
+        assetSource: ContentAssetSource? = defaultAssetSource,
         modContentDirs: List<File> = emptyList(),
         extraBlockJsons: List<String> = emptyList(),
         extraItemJsons: List<String> = emptyList(),
@@ -108,8 +123,12 @@ object RegistryBootstrap {
         preFreezeHook: (() -> Unit)? = null
     ) {
         synchronized(bootstrapLock) {
-            val contextModSignature = computeContextModSignature(context)
-            val modsChanged = context != null && contextModSignature != lastLoadedModSignature
+            val effectiveSource = assetSource ?: defaultAssetSource
+            if (assetSource != null) {
+                defaultAssetSource = assetSource
+            }
+            val contextModSignature = computeModSignature(effectiveSource)
+            val modsChanged = effectiveSource != null && contextModSignature != lastLoadedModSignature
             if (state == State.INITIALIZED && !forceReinitialize && !modsChanged &&
                 modContentDirs.isEmpty() && extraBlockJsons.isEmpty() &&
                 extraItemJsons.isEmpty() && extraRecipeJsons.isEmpty() &&
@@ -119,7 +138,7 @@ object RegistryBootstrap {
                 return
             }
             initializeInternal(
-                context = context,
+                assetSource = effectiveSource,
                 modContentDirs = modContentDirs,
                 extraBlockJsons = extraBlockJsons,
                 extraItemJsons = extraItemJsons,
@@ -132,9 +151,8 @@ object RegistryBootstrap {
         }
     }
 
-    private fun computeContextModSignature(context: Context?): String {
-        if (context == null) return ""
-        val userModDir = File(context.filesDir, "content")
+    private fun computeModSignature(assetSource: ContentAssetSource?): String {
+        val userModDir = assetSource?.getUserModContentDir() ?: return ""
         if (!userModDir.isDirectory) return ""
         val subDirs = listOf(
             "B" to File(userModDir, "blocks"),
@@ -157,7 +175,7 @@ object RegistryBootstrap {
     }
 
     private fun initializeInternal(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraBlockJsons: List<String>,
         extraItemJsons: List<String>,
@@ -174,26 +192,24 @@ object RegistryBootstrap {
             ItemRegistry.clearForBootstrap()
             RecipeRegistry.clearForBootstrap()
             WorldGenRegistry.clearForBootstrap()
-            CommandRegistry.clearForBootstrap()
+            commandDelegate?.clearForBootstrap()
 
-            // Collect mod directories (app filesDir/content if present + caller-supplied dirs)
+            // Collect mod directories (user mod content dir if present + caller-supplied dirs)
             val effectiveModDirs = buildList {
-                if (context != null) {
-                    val userModDir = File(context.filesDir, "content")
-                    if (userModDir.isDirectory) {
-                        add(userModDir)
-                    }
+                val userModDir = assetSource?.getUserModContentDir()
+                if (userModDir != null && userModDir.isDirectory) {
+                    add(userModDir)
                 }
                 addAll(modContentDirs)
             }
 
             // 2. Load JSON content definitions
-            val blockDefs = loadBlockDefinitions(context, effectiveModDirs, extraBlockJsons)
-            val itemDefs = loadItemDefinitions(context, effectiveModDirs, extraItemJsons)
-            val recipeDefs = loadRecipeDefinitions(context, effectiveModDirs, extraRecipeJsons)
-            val commandDefs = loadCommandDefinitions(context, effectiveModDirs, extraCommandJsons)
-            val passDefs = loadWorldGenPassDefinitions(context, effectiveModDirs, extraWorldGenPassJsons)
-            val structoidDefs = loadStructoidDefinitions(context, effectiveModDirs, extraStructoidJsons)
+            val blockDefs = loadBlockDefinitions(assetSource, effectiveModDirs, extraBlockJsons)
+            val itemDefs = loadItemDefinitions(assetSource, effectiveModDirs, extraItemJsons)
+            val recipeDefs = loadRecipeDefinitions(assetSource, effectiveModDirs, extraRecipeJsons)
+            val commandDefs = loadCommandDefinitions(assetSource, effectiveModDirs, extraCommandJsons)
+            val passDefs = loadWorldGenPassDefinitions(assetSource, effectiveModDirs, extraWorldGenPassJsons)
+            val structoidDefs = loadStructoidDefinitions(assetSource, effectiveModDirs, extraStructoidJsons)
 
             // Sort block definitions so air loads first (guaranteeing numeric ID 0 for empty chunks)
             val orderedBlocks = orderBlockDefinitions(blockDefs)
@@ -228,8 +244,11 @@ object RegistryBootstrap {
                     )
                 )
             }
-            for (def in commandDefs) {
-                CommandRegistry.register(JsonCommand(def))
+            val cmdDelegate = commandDelegate
+            if (cmdDelegate != null) {
+                for (def in commandDefs) {
+                    cmdDelegate.registerDefinition(def)
+                }
             }
 
             // Allow optional programmatic mod injection prior to freezing
@@ -240,8 +259,8 @@ object RegistryBootstrap {
             ItemRegistry.freeze()
             RecipeRegistry.freeze()
             WorldGenRegistry.freeze()
-            CommandRegistry.freeze()
-            lastLoadedModSignature = computeContextModSignature(context)
+            cmdDelegate?.freeze()
+            lastLoadedModSignature = computeModSignature(assetSource)
             state = State.INITIALIZED
         } catch (t: Throwable) {
             state = State.UNINITIALIZED
@@ -250,11 +269,11 @@ object RegistryBootstrap {
     }
 
     private fun loadBlockDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraBlockJsons: List<String>
     ): List<BlockDefinitionJson> {
-        val sources = collectJsonSources(context, ASSETS_BLOCKS_DIR, modContentDirs, "blocks", extraBlockJsons)
+        val sources = collectJsonSources(assetSource, ASSETS_BLOCKS_DIR, modContentDirs, "blocks", extraBlockJsons)
         if (sources.isEmpty()) {
             throw ContentLoadException("No block JSON definitions found under $ASSETS_BLOCKS_DIR")
         }
@@ -264,11 +283,11 @@ object RegistryBootstrap {
     }
 
     private fun loadItemDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraItemJsons: List<String>
     ): List<ItemDefinitionJson> {
-        val sources = collectJsonSources(context, ASSETS_ITEMS_DIR, modContentDirs, "items", extraItemJsons)
+        val sources = collectJsonSources(assetSource, ASSETS_ITEMS_DIR, modContentDirs, "items", extraItemJsons)
         if (sources.isEmpty()) {
             throw ContentLoadException("No item JSON definitions found under $ASSETS_ITEMS_DIR")
         }
@@ -278,34 +297,34 @@ object RegistryBootstrap {
     }
 
     private fun loadRecipeDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraRecipeJsons: List<String>
     ): List<RecipeDefinitionJson> {
-        val sources = collectJsonSources(context, ASSETS_RECIPES_DIR, modContentDirs, "recipes", extraRecipeJsons)
+        val sources = collectJsonSources(assetSource, ASSETS_RECIPES_DIR, modContentDirs, "recipes", extraRecipeJsons)
         return sources.map { (name, json) ->
             parseJson(name, json, recipeAdapter, "recipe definition")
         }
     }
 
     private fun loadCommandDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraCommandJsons: List<String>
     ): List<CommandDefinitionJson> {
-        val sources = collectJsonSources(context, ASSETS_COMMANDS_DIR, modContentDirs, "commands", extraCommandJsons)
+        val sources = collectJsonSources(assetSource, ASSETS_COMMANDS_DIR, modContentDirs, "commands", extraCommandJsons)
         return sources.map { (name, json) ->
             parseJson(name, json, commandAdapter, "command definition")
         }
     }
 
     private fun loadWorldGenPassDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraWorldGenPassJsons: List<String>
     ): List<WorldGenPassDefinitionJson> {
         val sources = collectJsonSources(
-            context = context,
+            assetSource = assetSource,
             assetSubDir = ASSETS_WORLDGEN_PASSES_DIR,
             modContentDirs = modContentDirs,
             modSubFolder = "worldgen/passes",
@@ -317,12 +336,12 @@ object RegistryBootstrap {
     }
 
     private fun loadStructoidDefinitions(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         modContentDirs: List<File>,
         extraStructoidJsons: List<String>
     ): List<StructoidDefinitionJson> {
         val sources = collectJsonSources(
-            context = context,
+            assetSource = assetSource,
             assetSubDir = ASSETS_STRUCTOIDS_DIR,
             modContentDirs = modContentDirs,
             modSubFolder = "worldgen/structoids",
@@ -465,7 +484,7 @@ object RegistryBootstrap {
     }
 
     private fun collectJsonSources(
-        context: Context?,
+        assetSource: ContentAssetSource?,
         assetSubDir: String,
         modContentDirs: List<File>,
         modSubFolder: String,
@@ -473,18 +492,13 @@ object RegistryBootstrap {
     ): List<Pair<String, String>> {
         val collected = mutableListOf<Pair<String, String>>()
 
-        // 1. Base assets (Android AssetManager or local JVM fallback)
+        // 1. Base assets (platform ContentAssetSource or local JVM fallback)
         var loadedFromAssets = false
-        if (context != null) {
-            val assetManager = context.assets
-            val names = assetManager.list(assetSubDir)?.filter { it.endsWith(".json", ignoreCase = true) }?.sorted().orEmpty()
-            if (names.isNotEmpty()) {
+        if (assetSource != null) {
+            val entries = assetSource.listJsonAssets(assetSubDir)
+            if (entries.isNotEmpty()) {
                 loadedFromAssets = true
-                for (name in names) {
-                    val path = "$assetSubDir/$name"
-                    val json = assetManager.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    collected.add(path to json)
-                }
+                collected.addAll(entries)
             }
         }
 

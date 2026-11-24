@@ -1,12 +1,12 @@
 package com.nitrous.tessellate.world
 
 import com.nitrous.tessellate.entity.Entity
+import com.nitrous.tessellate.entity.ItemDropMerger
 import com.nitrous.tessellate.registry.RegistryBootstrap
-import com.nitrous.tessellate.save.WorldSaveManager
-import com.nitrous.tessellate.save.WorldSaveStorage
-import com.nitrous.tessellate.texture.TexturePipeline
 import com.nitrous.tessellate.worldgen.WorldGenRegistry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -17,6 +17,8 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.logging.Level
+import java.util.logging.Logger
 import kotlin.math.abs
 import kotlin.math.floor
 
@@ -47,7 +49,7 @@ class World private constructor(
     val chunksY: Int,
     val chunksZ: Int,
     val isInfinite: Boolean,
-    val saveStorage: WorldSaveStorage? = null,
+    val saveStorage: WorldChunkStorage? = null,
     private val initialCenterX: Float = 24.5f,
     private val initialCenterZ: Float = 24.5f
 ) {
@@ -58,7 +60,7 @@ class World private constructor(
         session: WorldSession,
         renderDistance: Int = 4,
         heightChunks: Int = 8,
-        saveStorage: WorldSaveStorage? = null,
+        saveStorage: WorldChunkStorage? = null,
         initialCenterX: Float = 24.5f,
         initialCenterZ: Float = 24.5f
     ) : this(
@@ -121,14 +123,20 @@ class World private constructor(
     private val chunkLock = Any()
     private val chunks = HashMap<ChunkPos, Chunk>()
     private val fastChunks = ChunkFastMap()
-    private val prebuiltMeshes = ConcurrentHashMap<ChunkPos, ChunkMesh>()
+    private val prebuiltMeshes = ConcurrentHashMap<ChunkPos, PrebuiltChunkMesh>()
     private val vaporizedChunks = HashSet<ChunkPos>()
 
     val lightEngine = LightEngine()
     val lightQueue: LightEngine
         get() = lightEngine
 
-    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val streamExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        if (throwable !is CancellationException) {
+            LOGGER.log(Level.WARNING, "World chunk streaming failed safely", throwable)
+        }
+    }
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + streamExceptionHandler)
+    private val streamControlLock = Any()
     private var activeStreamJob: Job? = null
     private var lastStreamCenterCx: Int = Int.MIN_VALUE
     private var lastStreamCenterCz: Int = Int.MIN_VALUE
@@ -159,6 +167,7 @@ class World private constructor(
     val entities = mutableListOf<Entity>()
     private val pendingSpawnEntities = mutableListOf<Entity>()
     private val entityTickScratch = ArrayList<Entity>()
+    private val itemDropMerger = ItemDropMerger()
     private val entityLock = Any()
     private var isTickingEntities = false
 
@@ -186,7 +195,7 @@ class World private constructor(
         chunks.values.toList()
     }
 
-    fun consumePrebuiltMesh(pos: ChunkPos): ChunkMesh? {
+    fun consumePrebuiltMesh(pos: ChunkPos): PrebuiltChunkMesh? {
         return prebuiltMeshes.remove(pos)
     }
 
@@ -249,6 +258,7 @@ class World private constructor(
     }
 
     fun setBlock(wx: Int, wy: Int, wz: Int, type: BlockType): Boolean {
+        if (isDestroyed) return false
         if (wy !in 0 until sizeY) return false
         if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
             return false
@@ -448,7 +458,7 @@ class World private constructor(
         newDistance: Int,
         playerX: Float,
         playerZ: Float,
-        texturePipeline: TexturePipeline? = null,
+        meshPrebuilder: ChunkMeshPrebuilder? = null,
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default
     ): Job? {
         val clamped = newDistance.coerceIn(1, 16)
@@ -459,7 +469,7 @@ class World private constructor(
         return streamChunksAround(
             playerX = playerX,
             playerZ = playerZ,
-            texturePipeline = texturePipeline,
+            meshPrebuilder = meshPrebuilder,
             ioDispatcher = ioDispatcher,
             forceCheck = true
         )
@@ -492,7 +502,7 @@ class World private constructor(
             val entIter = entities.iterator()
             while (entIter.hasNext()) {
                 val entity = entIter.next()
-                if (WorldSaveManager.chunkEntityPos(entity, chunksY) == pos) {
+                if (chunkEntityPos(entity, chunksY) == pos) {
                     entity.isRemoved = true
                     if (!isTickingEntities) entIter.remove()
                 }
@@ -500,7 +510,7 @@ class World private constructor(
             val pendIter = pendingSpawnEntities.iterator()
             while (pendIter.hasNext()) {
                 val entity = pendIter.next()
-                if (WorldSaveManager.chunkEntityPos(entity, chunksY) == pos) {
+                if (chunkEntityPos(entity, chunksY) == pos) {
                     entity.isRemoved = true
                     if (!isTickingEntities) pendIter.remove()
                 }
@@ -525,7 +535,7 @@ class World private constructor(
     fun streamChunksAround(
         playerX: Float,
         playerZ: Float,
-        texturePipeline: TexturePipeline? = null,
+        meshPrebuilder: ChunkMeshPrebuilder? = null,
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
         forceCheck: Boolean = false
     ): Job? {
@@ -533,19 +543,22 @@ class World private constructor(
 
         val centerCx = floor(playerX).toInt() shr 4
         val centerCz = floor(playerZ).toInt() shr 4
-
-        if (!forceCheck && centerCx == lastStreamCenterCx && centerCz == lastStreamCenterCz) {
-            val currentJob = activeStreamJob
-            if (isStreamWindowUpToDate || (currentJob != null && currentJob.isActive)) {
-                return currentJob
+        val currentEpoch: Long
+        synchronized(streamControlLock) {
+            if (isDestroyed) return null
+            if (!forceCheck && centerCx == lastStreamCenterCx && centerCz == lastStreamCenterCz) {
+                val currentJob = activeStreamJob
+                if (isStreamWindowUpToDate || (currentJob != null && currentJob.isActive)) {
+                    return currentJob
+                }
             }
+            lastStreamCenterCx = centerCx
+            lastStreamCenterCz = centerCz
+            isStreamWindowUpToDate = false
+            currentEpoch = streamEpoch.incrementAndGet()
+            activeStreamJob?.cancel()
+            activeStreamJob = null
         }
-        lastStreamCenterCx = centerCx
-        lastStreamCenterCz = centerCz
-        isStreamWindowUpToDate = false
-        val currentEpoch = streamEpoch.incrementAndGet()
-        activeStreamJob?.cancel()
-        activeStreamJob = null
 
         // 1. Unload chunks outside render distance immediately to bound memory
         val unloadedChunks = ArrayList<Pair<ChunkPos, Chunk>>()
@@ -567,7 +580,7 @@ class World private constructor(
         }
 
         // Persist unloaded chunks and their active entities off the render thread
-        if (unloadedChunks.isNotEmpty() && saveStorage != null) {
+        if (unloadedChunks.isNotEmpty() && saveStorage != null && !isDestroyed) {
             val unloadedPositions = HashSet<ChunkPos>(unloadedChunks.size)
             for ((pos, _) in unloadedChunks) {
                 unloadedPositions.add(pos)
@@ -578,7 +591,7 @@ class World private constructor(
                 while (entIter.hasNext()) {
                     val entity = entIter.next()
                     if (entity.isRemoved) continue
-                    val ePos = WorldSaveManager.chunkEntityPos(entity, chunksY)
+                    val ePos = chunkEntityPos(entity, chunksY)
                     if (unloadedPositions.contains(ePos)) {
                         entitiesByChunk.getOrPut(ePos) { mutableListOf() }.add(entity)
                         if (!isTickingEntities) {
@@ -590,7 +603,7 @@ class World private constructor(
                 while (pendIter.hasNext()) {
                     val entity = pendIter.next()
                     if (entity.isRemoved) continue
-                    val ePos = WorldSaveManager.chunkEntityPos(entity, chunksY)
+                    val ePos = chunkEntityPos(entity, chunksY)
                     if (unloadedPositions.contains(ePos)) {
                         entitiesByChunk.getOrPut(ePos) { mutableListOf() }.add(entity)
                         if (!isTickingEntities) {
@@ -633,9 +646,13 @@ class World private constructor(
         }
 
         if (missingColumns.isEmpty()) {
-            activeStreamJob?.cancel()
-            activeStreamJob = null
-            isStreamWindowUpToDate = true
+            synchronized(streamControlLock) {
+                if (streamEpoch.get() == currentEpoch) {
+                    activeStreamJob?.cancel()
+                    activeStreamJob = null
+                    isStreamWindowUpToDate = true
+                }
+            }
             return null
         }
 
@@ -646,99 +663,132 @@ class World private constructor(
         }
 
         val job = streamScope.launch(ioDispatcher) {
-            for ((cx, cz) in missingColumns) {
-                if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
-                // Double check column hasn't wandered outside active window
-                if (abs(cx - lastStreamCenterCx) > renderDistance ||
-                    abs(cz - lastStreamCenterCz) > renderDistance
-                ) {
-                    continue
-                }
-
-                val colGenStartNs = System.nanoTime()
-                val builtColumn = ArrayList<Pair<ChunkPos, Pair<Chunk, List<Entity>>>>(chunksY)
-                for (cy in chunksY - 1 downTo 0) {
+            try {
+                for ((cx, cz) in missingColumns) {
                     if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
-                    val pos = ChunkPos(cx, cy, cz)
-                    val key = packChunkKey(cx, cy, cz)
-                    val skip = synchronized(chunkLock) { fastChunks.get(key) != null || vaporizedChunks.contains(pos) }
-                    if (skip) continue
-                    builtColumn.add(pos to buildOrLoadChunk(pos))
-                }
-                if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch || builtColumn.isEmpty()) continue
-
-                val insertedChunks = ArrayList<Pair<ChunkPos, Chunk>>(builtColumn.size)
-                val entitiesToSpawn = ArrayList<Entity>()
-                synchronized(chunkLock) {
-                    if (!isDestroyed &&
-                        streamEpoch.get() == currentEpoch &&
-                        abs(cx - lastStreamCenterCx) <= renderDistance &&
-                        abs(cz - lastStreamCenterCz) <= renderDistance
+                    kotlinx.coroutines.yield()
+                    val (activeCenterX, activeCenterZ) = synchronized(streamControlLock) {
+                        lastStreamCenterCx to lastStreamCenterCz
+                    }
+                    if (abs(cx - activeCenterX) > renderDistance ||
+                        abs(cz - activeCenterZ) > renderDistance
                     ) {
-                        for ((pos, built) in builtColumn) {
-                            val (chunk, restoredEntities) = built
-                            val key = packChunkKey(pos.x, pos.y, pos.z)
-                            if (fastChunks.get(key) == null && !vaporizedChunks.contains(pos)) {
-                                chunks[pos] = chunk
-                                fastChunks.put(key, chunk)
-                                insertedChunks.add(pos to chunk)
-                                asyncGeneratedChunksCount.incrementAndGet()
-                                if (restoredEntities.isNotEmpty()) {
-                                    entitiesToSpawn.addAll(restoredEntities)
+                        continue
+                    }
+
+                    val colGenStartNs = System.nanoTime()
+                    val builtColumn = ArrayList<Pair<ChunkPos, Pair<Chunk, List<Entity>>>>(chunksY)
+                    val columnChunks = arrayOfNulls<Chunk>(chunksY)
+                    for (cy in chunksY - 1 downTo 0) {
+                        if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
+                        val pos = ChunkPos(cx, cy, cz)
+                        val key = packChunkKey(cx, cy, cz)
+                        val skip = synchronized(chunkLock) { fastChunks.get(key) != null || vaporizedChunks.contains(pos) }
+                        if (skip) continue
+                        val built = buildOrLoadChunk(pos)
+                        builtColumn.add(pos to built)
+                        columnChunks[cy] = built.first
+                    }
+                    if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch || builtColumn.isEmpty()) continue
+
+                    // Initialize column lighting top-down BEFORE publishing chunks to GL/render readers
+                    for ((_, built) in builtColumn) {
+                        if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
+                        lightEngine.initializeChunkLighting(built.first, this@World) { lx, ly, lz ->
+                            if (lx == cx && lz == cz && ly in 0 until chunksY) columnChunks[ly] else getChunk(lx, ly, lz)
+                        }
+                    }
+                    if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) continue
+
+                    val insertedChunks = ArrayList<Pair<ChunkPos, Chunk>>(builtColumn.size)
+                    val entitiesToSpawn = ArrayList<Entity>()
+                    synchronized(chunkLock) {
+                        val (curCx, curCz) = synchronized(streamControlLock) {
+                            lastStreamCenterCx to lastStreamCenterCz
+                        }
+                        if (!isDestroyed &&
+                            streamEpoch.get() == currentEpoch &&
+                            abs(cx - curCx) <= renderDistance &&
+                            abs(cz - curCz) <= renderDistance
+                        ) {
+                            for ((pos, built) in builtColumn) {
+                                val (chunk, restoredEntities) = built
+                                val key = packChunkKey(pos.x, pos.y, pos.z)
+                                if (fastChunks.get(key) == null && !vaporizedChunks.contains(pos)) {
+                                    chunks[pos] = chunk
+                                    fastChunks.put(key, chunk)
+                                    insertedChunks.add(pos to chunk)
+                                    asyncGeneratedChunksCount.incrementAndGet()
+                                    if (restoredEntities.isNotEmpty()) {
+                                        entitiesToSpawn.addAll(restoredEntities)
+                                    }
                                 }
                             }
+                            if (insertedChunks.isNotEmpty()) {
+                                chunkTopologyVersion.incrementAndGet()
+                            }
                         }
-                        if (insertedChunks.isNotEmpty()) {
-                            chunkTopologyVersion.incrementAndGet()
+                    }
+                    if (insertedChunks.isEmpty()) continue
+                    lastChunkGenMs = (System.nanoTime() - colGenStartNs) / 1_000_000f
+
+                    for (entity in entitiesToSpawn) {
+                        spawnEntity(entity)
+                    }
+
+                    // Mark adjacent loaded non-empty neighbor chunks dirty so cross-chunk faces update cleanly
+                    for ((pos, _) in insertedChunks) {
+                        val cy = pos.y
+                        getChunk(cx - 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx + 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx, cy, cz - 1)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx, cy, cz + 1)?.let { if (!it.isEmpty) it.markDirty() }
+                    }
+
+                    // Optional experimental off-thread CPU chunk mesh prebuilding (disabled by default via Debug Options)
+                    if (meshPrebuilder != null && isActive && !isDestroyed && prebuiltMeshes.size < MAX_PREBUILT_MESHES) {
+                        for ((pos, chunk) in insertedChunks) {
+                            if (!isActive || isDestroyed || prebuiltMeshes.size >= MAX_PREBUILT_MESHES) break
+                            if (!chunk.isEmpty) {
+                                val epochBeforeBuild = chunk.meshDirtyEpoch
+                                val prebuilt = meshPrebuilder.buildPrebuiltMesh(this@World, chunk)
+                                if (!isDestroyed && chunk.meshDirtyEpoch == epochBeforeBuild) {
+                                    prebuiltMeshes[pos] = prebuilt
+                                }
+                            } else {
+                                chunk.needsMeshRebuild = false
+                            }
                         }
                     }
                 }
-                if (insertedChunks.isEmpty()) continue
-
-                for ((_, chunk) in insertedChunks) {
-                    lightEngine.initializeChunkLighting(chunk, this@World)
-                }
-                lastChunkGenMs = (System.nanoTime() - colGenStartNs) / 1_000_000f
-
-                for (entity in entitiesToSpawn) {
-                    spawnEntity(entity)
-                }
-
-                // Mark adjacent loaded non-empty neighbor chunks dirty so cross-chunk faces update cleanly
-                for ((pos, _) in insertedChunks) {
-                    val cy = pos.y
-                    getChunk(cx - 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
-                    getChunk(cx + 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
-                    getChunk(cx, cy, cz - 1)?.let { if (!it.isEmpty) it.markDirty() }
-                    getChunk(cx, cy, cz + 1)?.let { if (!it.isEmpty) it.markDirty() }
-                }
-
-                // Pre-build CPU chunk meshes immediately per column off the GL thread so the
-                // render loop only uploads ready GPU buffers within its per-frame budget,
-                // capped to avoid OOM when Render Distance increases while paused in menus.
-                if (texturePipeline != null && isActive && !isDestroyed && prebuiltMeshes.size < MAX_PREBUILT_MESHES) {
-                    for ((pos, chunk) in insertedChunks) {
-                        if (!isActive || isDestroyed || prebuiltMeshes.size >= MAX_PREBUILT_MESHES) break
-                        if (!chunk.isEmpty) {
-                            val mesh = ChunkMesh(chunk)
-                            mesh.generateMeshData(this@World, texturePipeline)
-                            prebuiltMeshes[pos] = mesh
-                        } else {
-                            chunk.needsMeshRebuild = false
-                        }
+                synchronized(streamControlLock) {
+                    if (isActive && !isDestroyed && streamEpoch.get() == currentEpoch) {
+                        isStreamWindowUpToDate = true
                     }
                 }
-            }
-            if (isActive && !isDestroyed && streamEpoch.get() == currentEpoch) {
-                isStreamWindowUpToDate = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                LOGGER.log(Level.WARNING, "Background chunk streaming caught exception", t)
             }
         }
-        activeStreamJob = job
+        synchronized(streamControlLock) {
+            if (streamEpoch.get() == currentEpoch && !isDestroyed) {
+                activeStreamJob = job
+            } else {
+                job.cancel()
+            }
+        }
         return job
     }
 
     fun shutdownStreaming() {
-        activeStreamJob?.cancel()
+        synchronized(streamControlLock) {
+            streamEpoch.incrementAndGet()
+            activeStreamJob?.cancel()
+            activeStreamJob = null
+            isStreamWindowUpToDate = false
+        }
         streamScope.cancel()
     }
 
@@ -747,7 +797,6 @@ class World private constructor(
      */
     fun destroy() {
         isDestroyed = true
-        isStreamWindowUpToDate = false
         shutdownStreaming()
         lightEngine.clear()
         clearEntities()
@@ -757,8 +806,10 @@ class World private constructor(
             chunkTopologyVersion.incrementAndGet()
         }
         prebuiltMeshes.clear()
-        lastStreamCenterCx = Int.MIN_VALUE
-        lastStreamCenterCz = Int.MIN_VALUE
+        synchronized(streamControlLock) {
+            lastStreamCenterCx = Int.MIN_VALUE
+            lastStreamCenterCz = Int.MIN_VALUE
+        }
     }
 
     fun getSurfaceHeight(wx: Int, wz: Int): Int {
@@ -994,12 +1045,29 @@ class World private constructor(
 
     fun getPrebuiltMeshCount(): Int = prebuiltMeshes.size
 
+    /**
+     * Merges nearby identical active [com.nitrous.tessellate.entity.ItemDropEntity] drops within
+     * 1.5 blocks using capped candidate checks in `:core`.
+     */
+    fun mergeNearbyItemDrops(minTickCount: Int = 0): ItemDropMerger.MergePassResult {
+        return itemDropMerger.mergeNearby(this, minTickCount)
+    }
+
     companion object {
+        private val LOGGER: Logger = Logger.getLogger(World::class.java.name)
+
         /** Default distance culling radius for entity ticking: 4 chunks (64 blocks). */
         const val DEFAULT_ENTITY_TICK_RADIUS_BLOCKS: Float = (4 * Chunk.SIZE).toFloat()
 
         /** Upper bound on unconsumed off-thread CPU chunk meshes held in memory while paused/streaming. */
         const val MAX_PREBUILT_MESHES: Int = 48
+
+        fun chunkEntityPos(entity: Entity, chunksY: Int): ChunkPos {
+            val cx = floor(entity.position.x).toInt() shr 4
+            val cy = (floor(entity.position.y).toInt() shr 4).coerceIn(0, (chunksY - 1).coerceAtLeast(0))
+            val cz = floor(entity.position.z).toInt() shr 4
+            return ChunkPos(cx, cy, cz)
+        }
 
         @Suppress("NOTHING_TO_INLINE")
         internal inline fun packChunkKey(cx: Int, cy: Int, cz: Int): Long {

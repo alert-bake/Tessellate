@@ -25,3 +25,5 @@ dependencyResolutionManagement {
 rootProject.name = "Tessellate"
 
 include(":app")
+include(":core")
+include(":desktop")

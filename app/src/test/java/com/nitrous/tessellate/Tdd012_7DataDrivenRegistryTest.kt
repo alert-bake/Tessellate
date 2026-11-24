@@ -10,7 +10,7 @@ import com.nitrous.tessellate.item.ItemType
 import com.nitrous.tessellate.registry.ContentLoadException
 import com.nitrous.tessellate.registry.GameRegistries
 import com.nitrous.tessellate.registry.Identifier
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.registry.RegistryFrozenException
 import com.nitrous.tessellate.texture.TextureConstants
 import com.nitrous.tessellate.world.BlockRegistry
@@ -47,7 +47,7 @@ class Tdd012_7DataDrivenRegistryTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     @After
@@ -56,7 +56,7 @@ class Tdd012_7DataDrivenRegistryTest {
         if (modRoot.exists()) {
             modRoot.deleteRecursively()
         }
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     @Test
@@ -189,7 +189,7 @@ class Tdd012_7DataDrivenRegistryTest {
         """.trimIndent()
 
         assertThrows(ContentLoadException::class.java) {
-            RegistryBootstrap.initialize(
+            AndroidRegistryBootstrap.initialize(
                 context = context,
                 extraItemJsons = listOf(brokenItemJson),
                 forceReinitialize = true

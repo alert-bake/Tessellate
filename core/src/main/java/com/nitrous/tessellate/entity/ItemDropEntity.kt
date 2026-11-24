@@ -1,45 +1,120 @@
 package com.nitrous.tessellate.entity
 
 import com.nitrous.tessellate.item.ItemRegistry
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.math.Vec3
-import com.nitrous.tessellate.world.AABB
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.World
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.sin
 
 /**
  * Dynamic item-drop entity spawned when blocks break or via `/spawn`.
  *
- * Hitbox: 0.25 x 0.25 x 0.25 world units.
- * [position] represents the bottom-center point of the entity (consistent with Player),
- * so [boundingBox] spans [x - 0.125 .. x + 0.125], [y .. y + 0.25], [z - 0.125 .. z + 0.125].
- *
- * Cached [boundingBox] is refreshed strictly **once per tick** after all physics substeps settle,
- * incurring zero allocations during [tick].
+ * Lives in `:core` (100% platform-independent):
+ * - Hitbox: `0.25 x 0.25 x 0.25` world units (`position` is bottom-center).
+ * - Continuous Y-axis rotation (`rotationYawDegrees`) and sine-wave vertical bobbing (`bobOffsetY`).
+ * - Unbounded simulation stack [count] (absorbs nearby identical drops into a single entity) while
+ *   visual layered rendering caps at [MAX_RENDER_STACK_LAYERS] (64) via [ItemDropRenderState].
  */
 open class ItemDropEntity(
     position: Vec3,
-    val itemId: String = ItemRegistry.DIRT.identifier.toCanonicalString()
+    val itemId: String = ItemRegistry.DIRT.identifier.toCanonicalString(),
+    count: Int = 1
 ) : Entity(
     position = position,
     boundingBox = createBoundingBox(position)
 ) {
+
+    var count: Int = count.coerceAtLeast(1)
+        set(value) {
+            field = value.coerceAtLeast(1)
+        }
+
+    /** Accumulated simulation age in seconds for spinning and sine-wave bobbing. */
+    var ageSeconds: Float = 0f
+        private set
+
+    /** Current Y-axis visual rotation angle in degrees. */
+    var rotationYawDegrees: Float = 0f
+        private set
+
+    /** Current Y-axis visual rotation angle in radians. */
+    val rotationYawRadians: Float
+        get() = (rotationYawDegrees * (PI / 180.0)).toFloat()
+
+    /** Vertical floating + sine-wave bob offset applied when rendering this item. */
+    var bobOffsetY: Float = FLOAT_BASE_OFFSET_Y
+        private set
+
+    /** Deterministic per-drop phase offset so neighboring item piles bob organically. */
+    val bobPhaseOffset: Float = ((abs(position.x * 11.37f + position.z * 7.91f) % 1.0f) * (2.0 * PI)).toFloat()
 
     override val typeId: String
         get() = TYPE_ID
 
     init {
         refreshBoundingBox()
+        updateAnimationState(0f)
+    }
+
+    /** Returns how many visual offset-spinning layers should be rendered (capped at 64). */
+    fun visualRenderLayerCount(): Int = count.coerceIn(1, MAX_RENDER_STACK_LAYERS)
+
+    /** Resolves the platform-independent texture key associated with [itemId], if any. */
+    fun resolveTextureKey(): String {
+        val block = ItemRegistry.get(itemId)?.associatedBlock
+        return if (block != null && !block.isAir && block.topTexture.isNotEmpty()) {
+            block.topTexture
+        } else {
+            ""
+        }
+    }
+
+    override fun updateRenderState(reuse: EntityRenderState?): ItemDropRenderState {
+        val state = (reuse as? ItemDropRenderState) ?: ItemDropRenderState()
+        state.centerX = (boundingBox.minX + boundingBox.maxX) * 0.5f
+        state.centerY = (boundingBox.minY + boundingBox.maxY) * 0.5f
+        state.centerZ = (boundingBox.minZ + boundingBox.maxZ) * 0.5f
+        state.scale = WIDTH
+        state.yawRadians = rotationYawRadians
+        state.bobOffsetY = bobOffsetY
+        state.textureKey = resolveTextureKey()
+        state.stackCount = count
+        state.renderLayerCount = visualRenderLayerCount()
+        return state
+    }
+
+    /** Absorbs [other]'s entire item count into this entity and marks [other] removed. */
+    fun absorbStack(other: ItemDropEntity) {
+        if (other === this || other.isRemoved) return
+        val combined = this.count.toLong() + other.count.toLong()
+        this.count = combined.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+        other.isRemoved = true
     }
 
     override fun writeExtraData(): Map<String, Any?> {
-        return mapOf("itemId" to itemId)
+        return mapOf(
+            "itemId" to itemId,
+            "count" to count
+        )
+    }
+
+    override fun readExtraData(data: Map<String, Any?>) {
+        val rawCount = data["count"]
+        val parsed = when (rawCount) {
+            is Number -> rawCount.toInt()
+            is String -> rawCount.toIntOrNull() ?: 1
+            else -> 1
+        }
+        count = parsed.coerceAtLeast(1)
     }
 
     /**
-     * Advances physics and resolves vertical collisions with solid world blocks.
+     * Advances physics, spinning, sine bobbing, and resolves vertical collisions with solid blocks.
      * Uses bounded substeps and swept vertical bounds without thrashing [boundingBox]
      * per substep; updates cached AABB once at the end of the tick.
      */
@@ -49,6 +124,8 @@ open class ItemDropEntity(
             isRemoved = true
             return
         }
+
+        updateAnimationState(deltaTime)
 
         val projectedEndVy = (velocity.y - GRAVITY * deltaTime).coerceAtLeast(TERMINAL_VELOCITY_Y)
         val maxSpeedY = maxOf(abs(velocity.y), abs(projectedEndVy))
@@ -82,6 +159,14 @@ open class ItemDropEntity(
 
         tickCount++
         refreshBoundingBox()
+    }
+
+    private fun updateAnimationState(deltaTime: Float) {
+        if (deltaTime > 0f) {
+            ageSeconds += deltaTime
+        }
+        rotationYawDegrees = (ageSeconds * SPIN_DEGREES_PER_SEC) % 360f
+        bobOffsetY = FLOAT_BASE_OFFSET_Y + sin(ageSeconds * BOB_RAD_PER_SEC + bobPhaseOffset) * BOB_AMPLITUDE
     }
 
     private fun resolveVerticalCollisions(
@@ -181,6 +266,12 @@ open class ItemDropEntity(
         const val DEPTH: Float = 0.25f
         const val HALF_WIDTH: Float = WIDTH * 0.5f
         const val HALF_DEPTH: Float = DEPTH * 0.5f
+
+        const val SPIN_DEGREES_PER_SEC: Float = 90.0f
+        const val BOB_RAD_PER_SEC: Float = 3.2f
+        const val BOB_AMPLITUDE: Float = 0.05f
+        const val FLOAT_BASE_OFFSET_Y: Float = 0.10f
+        const val MAX_RENDER_STACK_LAYERS: Int = 64
 
         private const val MAX_SUBSTEP_DT: Float = 0.01f
         private const val MAX_SUBSTEP_DISPLACEMENT: Float = 0.125f

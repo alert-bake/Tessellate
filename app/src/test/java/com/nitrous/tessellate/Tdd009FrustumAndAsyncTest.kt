@@ -6,7 +6,7 @@ import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.graphics.Frustum
 import com.nitrous.tessellate.settings.GameSettings
 import com.nitrous.tessellate.settings.SettingsManager
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.World
 import com.nitrous.tessellate.world.WorldRenderer
 import kotlinx.coroutines.ExperimentalCoroutinesApi

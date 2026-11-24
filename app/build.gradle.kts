@@ -81,6 +81,7 @@ android {
 
 // Unused template dependencies are kept commented out below so they are not packaged into the APK.
 dependencies {
+  implementation(project(":core"))
   implementation(platform(libs.androidx.compose.bom))
   // implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)

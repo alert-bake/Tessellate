@@ -12,7 +12,7 @@ import com.nitrous.tessellate.core.SceneMode
 import com.nitrous.tessellate.core.TessellateEngine
 import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.registry.CommandDefinitionJson
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.registry.RegistryFrozenException
 import com.nitrous.tessellate.scene.WorldScene
 import com.nitrous.tessellate.texture.TextureConstants
@@ -59,12 +59,12 @@ class Tdd013AtomicLasagnaTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     @After
     fun tearDown() {
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     // =========================================================================
@@ -193,7 +193,7 @@ class Tdd013AtomicLasagnaTest {
             val initialJob = world.streamChunksAround(
                 playerX = 24.5f,
                 playerZ = 24.5f,
-                texturePipeline = pipeline,
+                meshPrebuilder = pipeline,
                 ioDispatcher = Dispatchers.Default,
                 forceCheck = true
             )
@@ -213,7 +213,7 @@ class Tdd013AtomicLasagnaTest {
             val moveJob = world.streamChunksAround(
                 playerX = player.posX,
                 playerZ = player.posZ,
-                texturePipeline = pipeline,
+                meshPrebuilder = pipeline,
                 ioDispatcher = Dispatchers.Default
             )
             assertNotNull(moveJob)
@@ -309,7 +309,7 @@ class Tdd013AtomicLasagnaTest {
             }
         """.trimIndent()
 
-        RegistryBootstrap.initialize(
+        AndroidRegistryBootstrap.initialize(
             context = context,
             extraStructoidJsons = listOf(structoidJson),
             forceReinitialize = true
@@ -374,7 +374,7 @@ class Tdd013AtomicLasagnaTest {
             }
         """.trimIndent()
 
-        RegistryBootstrap.initialize(
+        AndroidRegistryBootstrap.initialize(
             context = context,
             extraCommandJsons = listOf(modCommandJson),
             forceReinitialize = true
@@ -408,7 +408,7 @@ class Tdd013AtomicLasagnaTest {
             }
         """.trimIndent()
 
-        RegistryBootstrap.initialize(
+        AndroidRegistryBootstrap.initialize(
             context = context,
             extraWorldGenPassJsons = listOf(modPassJson),
             forceReinitialize = true

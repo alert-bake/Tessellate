@@ -45,12 +45,21 @@ class Chunk(
     var uniformRenderedLight: Byte = MAX_LIGHT.toByte()
         private set
 
+    private val lightStorageLock = Any()
+
     // Dirty tracking for incremental mesh & light updates
+    @Volatile
+    var meshDirtyEpoch: Long = 0L
+        private set
+
     @Volatile
     var needsMeshRebuild: Boolean = true
     var isDirty: Boolean
         get() = needsMeshRebuild
         set(value) {
+            if (value) {
+                meshDirtyEpoch++
+            }
             needsMeshRebuild = value
         }
 
@@ -113,6 +122,7 @@ class Chunk(
         val oldId = blocks[idx]
         if (oldId != type.id) {
             blocks[idx] = type.id
+            meshDirtyEpoch++
             needsMeshRebuild = true
             needsLightUpdate = true
             if (type != BlockType.AIR) {
@@ -155,6 +165,7 @@ class Chunk(
         blocks.fill(type.id)
         isEmpty = (type == BlockType.AIR)
         isSolidOpaque = type.isOpaque
+        meshDirtyEpoch++
         needsMeshRebuild = true
         if (type.isOpaque) {
             markCompletelyDark()
@@ -164,6 +175,7 @@ class Chunk(
     }
 
     fun markDirty() {
+        meshDirtyEpoch++
         needsMeshRebuild = true
     }
 
@@ -194,31 +206,46 @@ class Chunk(
     // Lazyprop Light State Helpers (-16..+16)
     // =========================================================================
 
-    fun ensureLightStorage(): Pair<ByteArray, ByteArray> {
+    fun ensureLightStorage(): Pair<ByteArray, ByteArray> = synchronized(lightStorageLock) {
         var intended = lightIntended
         var rendered = lightRendered
         if (intended == null) {
-            intended = ByteArray(VOLUME)
-            intended.fill(uniformIntendedLight)
-            lightIntended = intended
+            val newIntended = ByteArray(VOLUME)
+            newIntended.fill(uniformIntendedLight)
+            lightIntended = newIntended
+            intended = newIntended
         }
         if (rendered == null) {
-            rendered = ByteArray(VOLUME)
-            rendered.fill(uniformRenderedLight)
-            lightRendered = rendered
+            val newRendered = ByteArray(VOLUME)
+            newRendered.fill(uniformRenderedLight)
+            lightRendered = newRendered
+            rendered = newRendered
         }
         isCompletelyDark = false
         isCompletelyLit = false
-        return intended to rendered
+        intended to rendered
     }
 
     /**
      * Replaces/populates both light buffers directly from [srcIntended] and [srcRendered].
+     * Populates new arrays completely before publishing to lock-free readers.
      */
-    fun setLightArrays(srcIntended: ByteArray, srcRendered: ByteArray) {
-        val (dstIntended, dstRendered) = ensureLightStorage()
-        System.arraycopy(srcIntended, 0, dstIntended, 0, VOLUME)
-        System.arraycopy(srcRendered, 0, dstRendered, 0, VOLUME)
+    fun setLightArrays(srcIntended: ByteArray, srcRendered: ByteArray) = synchronized(lightStorageLock) {
+        val existingIntended = lightIntended
+        val existingRendered = lightRendered
+        if (existingIntended != null && existingRendered != null) {
+            System.arraycopy(srcIntended, 0, existingIntended, 0, VOLUME)
+            System.arraycopy(srcRendered, 0, existingRendered, 0, VOLUME)
+        } else {
+            val newIntended = ByteArray(VOLUME)
+            val newRendered = ByteArray(VOLUME)
+            System.arraycopy(srcIntended, 0, newIntended, 0, VOLUME)
+            System.arraycopy(srcRendered, 0, newRendered, 0, VOLUME)
+            lightIntended = newIntended
+            lightRendered = newRendered
+        }
+        isCompletelyDark = false
+        isCompletelyLit = false
     }
 
     fun getIntendedLightUnchecked(lx: Int, ly: Int, lz: Int): Int {
@@ -252,42 +279,66 @@ class Chunk(
     fun setIntendedLight(lx: Int, ly: Int, lz: Int, level: Int): Boolean {
         if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return false
         val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT).toByte()
-        val existingArr = lightIntended
-        if (existingArr == null) {
-            if (uniformIntendedLight == clamped) return false
-            val (intended, _) = ensureLightStorage()
-            intended[getIndex(lx, ly, lz)] = clamped
+        synchronized(lightStorageLock) {
+            val existingArr = lightIntended
+            if (existingArr == null) {
+                if (uniformIntendedLight == clamped) return false
+                val newIntended = ByteArray(VOLUME)
+                newIntended.fill(uniformIntendedLight)
+                newIntended[getIndex(lx, ly, lz)] = clamped
+                lightIntended = newIntended
+                if (lightRendered == null) {
+                    val newRendered = ByteArray(VOLUME)
+                    newRendered.fill(uniformRenderedLight)
+                    lightRendered = newRendered
+                }
+                isCompletelyDark = false
+                isCompletelyLit = false
+                return true
+            }
+            val idx = getIndex(lx, ly, lz)
+            if (existingArr[idx] == clamped) return false
+            existingArr[idx] = clamped
+            isCompletelyDark = false
+            isCompletelyLit = false
             return true
         }
-        val idx = getIndex(lx, ly, lz)
-        if (existingArr[idx] == clamped) return false
-        existingArr[idx] = clamped
-        isCompletelyDark = false
-        isCompletelyLit = false
-        return true
     }
 
     fun setRenderedLight(lx: Int, ly: Int, lz: Int, level: Int): Boolean {
         if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return false
         val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT).toByte()
-        val existingArr = lightRendered
-        if (existingArr == null) {
-            if (uniformRenderedLight == clamped) return false
-            val (_, rendered) = ensureLightStorage()
-            rendered[getIndex(lx, ly, lz)] = clamped
+        synchronized(lightStorageLock) {
+            val existingArr = lightRendered
+            if (existingArr == null) {
+                if (uniformRenderedLight == clamped) return false
+                val newRendered = ByteArray(VOLUME)
+                newRendered.fill(uniformRenderedLight)
+                newRendered[getIndex(lx, ly, lz)] = clamped
+                lightRendered = newRendered
+                if (lightIntended == null) {
+                    val newIntended = ByteArray(VOLUME)
+                    newIntended.fill(uniformIntendedLight)
+                    lightIntended = newIntended
+                }
+                isCompletelyDark = false
+                isCompletelyLit = false
+                meshDirtyEpoch++
+                needsMeshRebuild = true
+                return true
+            }
+            val idx = getIndex(lx, ly, lz)
+            if (existingArr[idx] == clamped) return false
+            existingArr[idx] = clamped
+            isCompletelyDark = false
+            isCompletelyLit = false
+            meshDirtyEpoch++
             needsMeshRebuild = true
             return true
         }
-        val idx = getIndex(lx, ly, lz)
-        if (existingArr[idx] == clamped) return false
-        existingArr[idx] = clamped
-        isCompletelyDark = false
-        isCompletelyLit = false
-        needsMeshRebuild = true
-        return true
     }
 
-    fun markCompletelyDark() {
+    fun markCompletelyDark() = synchronized(lightStorageLock) {
         lightIntended = null
         lightRendered = null
         uniformIntendedLight = MIN_LIGHT.toByte()
@@ -297,7 +348,7 @@ class Chunk(
         needsLightUpdate = false
     }
 
-    fun markCompletelyLit() {
+    fun markCompletelyLit() = synchronized(lightStorageLock) {
         lightIntended = null
         lightRendered = null
         uniformIntendedLight = MAX_LIGHT.toByte()
@@ -311,7 +362,7 @@ class Chunk(
      * Compacts light arrays back to uniform scalar state if every voxel is identically `-16` or `+16`,
      * freeing 8 KB of heap memory and flagging [isCompletelyDark] / [isCompletelyLit] for future skips.
      */
-    fun compactUniformLightIfPossible() {
+    fun compactUniformLightIfPossible() = synchronized(lightStorageLock) {
         val intended = lightIntended ?: return
         val rendered = lightRendered ?: return
         val first = intended[0]

@@ -15,8 +15,8 @@ import com.nitrous.tessellate.core.AppState
 import com.nitrous.tessellate.core.IGraphicsRuntime
 import com.nitrous.tessellate.core.SceneMode
 import com.nitrous.tessellate.core.TessellateEngine
-import com.nitrous.tessellate.graphics.Matrix4
 import com.nitrous.tessellate.graphics.Shader
+import com.nitrous.tessellate.math.Matrix4
 import com.nitrous.tessellate.item.Inventory
 import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.texture.TextureConstants

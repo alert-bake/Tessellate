@@ -1,10 +1,11 @@
 package com.nitrous.tessellate.world
 
 import android.opengl.GLES30
+import android.util.Log
 import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.graphics.Frustum
-import com.nitrous.tessellate.graphics.Matrix4
 import com.nitrous.tessellate.graphics.Shader
+import com.nitrous.tessellate.math.Matrix4
 import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.texture.TexturePipeline
 import java.util.concurrent.atomic.AtomicInteger
@@ -29,10 +30,31 @@ class WorldRenderer(
 
     val gpuFlushCount = AtomicInteger(0)
 
+    val nativeBufferPool = NativeBufferPool(
+        onWarning = { msg -> Log.w("Tessellate.NativePool", msg) }
+    )
+    val parallelMesher = ParallelChunkMesher()
+
+    @Volatile
+    var parallelMeshingEnabled: Boolean = false
+        set(value) {
+            field = value
+            if (!value) {
+                parallelMesher.clearPending()
+            }
+        }
+
+    var useNativeMemoryPooling: Boolean
+        get() = nativeBufferPool.isEnabled
+        set(value) {
+            nativeBufferPool.setEnabled(value)
+        }
+
     private val meshSwapLock = Any()
     private val chunkMeshMap = LinkedHashMap<ChunkPos, ChunkMesh>()
     private val chunkMeshes = mutableListOf<ChunkMesh>()
     private val visibleChunkMeshes = mutableListOf<ChunkMesh>()
+    private val renderVisibleScratch = mutableListOf<ChunkMesh>()
     private val pendingReleaseMeshes = mutableListOf<ChunkMesh>()
     private val dirtyQueueScratch = mutableListOf<ChunkMesh>()
     private var syncedWorldRef: World? = null
@@ -128,6 +150,7 @@ class WorldRenderer(
             syncedTopologyVersion = -1L
             world = newWorld
         }
+        parallelMesher.clearPending()
         syncWithWorld(initGlBuffers = false)
     }
 
@@ -153,7 +176,7 @@ class WorldRenderer(
                     existing?.let {
                         if (initGlBuffers) it.release() else pendingReleaseMeshes.add(it)
                     }
-                    val prebuilt = currentWorld.consumePrebuiltMesh(pos)
+                    val prebuilt = currentWorld.consumePrebuiltMesh(pos) as? ChunkMesh
                     val mesh = if (prebuilt != null && prebuilt.chunk === c) {
                         prebuilt
                     } else {
@@ -377,7 +400,8 @@ class WorldRenderer(
         texturePipeline: TexturePipeline,
         uploadToGpu: Boolean = true,
         focusX: Float = 0f,
-        focusZ: Float = 0f
+        focusZ: Float = 0f,
+        currentFrameIndex: Long = 0L
     ) {
         if (uploadToGpu) {
             processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
@@ -398,6 +422,45 @@ class WorldRenderer(
         syncWithWorld(initGlBuffers = false)
         val topologyChanged = prevTopology != syncedTopologyVersion
 
+        val maxCount = if (uploadToGpu) MAX_MESH_UPLOADS_PER_FRAME else Int.MAX_VALUE
+        val startNs = if (uploadToGpu) System.nanoTime() else 0L
+        var processed = 0
+        var anyUpdated = false
+
+        // Drain completed raw FloatArray meshes built by :core workers and upload them on the GL thread
+        if (uploadToGpu) {
+            while (processed < maxCount) {
+                val elapsed = System.nanoTime() - startNs
+                if (processed > 0 && elapsed >= MAX_MESH_BUDGET_NS) {
+                    break
+                }
+                if (elapsed >= MAX_DRAIN_BUDGET_NS) {
+                    break
+                }
+                val finishedOutput = parallelMesher.pollCompletedMesh() ?: break
+                val finishedChunk = finishedOutput.chunk
+                val pos = ChunkPos(finishedChunk.chunkX, finishedChunk.chunkY, finishedChunk.chunkZ)
+                val activeMesh = synchronized(meshSwapLock) { chunkMeshMap[pos] }
+                if (!currentWorld.isDestroyed &&
+                    activeMesh != null &&
+                    activeMesh.chunk === finishedChunk &&
+                    !finishedChunk.needsMeshRebuild &&
+                    finishedChunk.meshDirtyEpoch == finishedOutput.dirtyEpoch
+                ) {
+                    activeMesh.applyMeshOutput(finishedOutput, texturePipeline)
+                    if (activeMesh.hasPendingGpuUpload) {
+                        activeMesh.uploadCpuMeshToGpu(nativeBufferPool, currentFrameIndex)
+                    }
+                    anyUpdated = true
+                    processed++
+                }
+            }
+        }
+
+        if (currentWorld.isDestroyed) {
+            return
+        }
+
         dirtyQueueScratch.clear()
         synchronized(meshSwapLock) {
             for (i in 0 until chunkMeshes.size) {
@@ -412,7 +475,7 @@ class WorldRenderer(
             }
         }
 
-        if (dirtyQueueScratch.isEmpty() && !topologyChanged) {
+        if (dirtyQueueScratch.isEmpty() && !topologyChanged && !anyUpdated) {
             return
         }
 
@@ -420,56 +483,71 @@ class WorldRenderer(
             sortMeshesAscendingByDistSq(dirtyQueueScratch)
         }
 
-        val maxCount = if (uploadToGpu) MAX_MESH_UPLOADS_PER_FRAME else Int.MAX_VALUE
-        val startNs = if (uploadToGpu) System.nanoTime() else 0L
-        var processed = 0
-        var anyUpdated = false
+        try {
+            var submittedThisFrame = 0
+            for (i in 0 until dirtyQueueScratch.size) {
+                if (currentWorld.isDestroyed || processed >= maxCount) break
+                val elapsed = System.nanoTime() - startNs
+                if (uploadToGpu && (processed > 0 || submittedThisFrame >= MAX_SUBMISSIONS_PER_FRAME) && elapsed >= MAX_MESH_BUDGET_NS) {
+                    break
+                }
 
-        for (i in 0 until dirtyQueueScratch.size) {
-            if (processed >= maxCount) break
-            if (uploadToGpu && processed > 0 && (System.nanoTime() - startNs) >= MAX_MESH_BUDGET_NS) {
-                break
-            }
+                var mesh = dirtyQueueScratch[i]
+                val c = mesh.chunk
+                val pos = ChunkPos(c.chunkX, c.chunkY, c.chunkZ)
 
-            var mesh = dirtyQueueScratch[i]
-            val c = mesh.chunk
-            val pos = ChunkPos(c.chunkX, c.chunkY, c.chunkZ)
-
-            val prebuilt = currentWorld.consumePrebuiltMesh(pos)
-            if (prebuilt != null && prebuilt.chunk === c && prebuilt.rebuildCount > 0 && !c.needsMeshRebuild) {
-                synchronized(meshSwapLock) {
-                    val currentInMap = chunkMeshMap[pos]
-                    if (currentInMap === mesh) {
-                        chunkMeshMap[pos] = prebuilt
-                        val idx = chunkMeshes.indexOf(mesh)
-                        if (idx >= 0) {
-                            chunkMeshes[idx] = prebuilt
+                val prebuilt = currentWorld.consumePrebuiltMesh(pos) as? ChunkMesh
+                if (prebuilt != null && prebuilt.chunk === c && prebuilt.rebuildCount > 0 && !c.needsMeshRebuild) {
+                    synchronized(meshSwapLock) {
+                        val currentInMap = chunkMeshMap[pos]
+                        if (currentInMap === mesh) {
+                            chunkMeshMap[pos] = prebuilt
+                            val idx = chunkMeshes.indexOf(mesh)
+                            if (idx >= 0) {
+                                chunkMeshes[idx] = prebuilt
+                            }
+                            if (uploadToGpu) {
+                                pendingReleaseMeshes.add(mesh)
+                            }
+                            mesh = prebuilt
                         }
-                        if (uploadToGpu) {
-                            pendingReleaseMeshes.add(mesh)
-                        }
-                        mesh = prebuilt
                     }
                 }
-            }
 
-            if (c.needsMeshRebuild) {
-                if (uploadToGpu) {
-                    mesh.buildMesh(currentWorld, texturePipeline)
-                } else {
-                    mesh.generateMeshData(currentWorld, texturePipeline)
-                }
-                anyUpdated = true
-                if (!c.isEmpty || mesh.generatedFacesCount > 0) {
+                if (c.needsMeshRebuild) {
+                    if (uploadToGpu && parallelMeshingEnabled) {
+                        if (parallelMesher.queuedCount < ParallelChunkMesher.MAX_QUEUED_CHUNKS && submittedThisFrame < MAX_SUBMISSIONS_PER_FRAME) {
+                            if (parallelMesher.submitDirtyChunk(
+                                chunk = c,
+                                world = currentWorld,
+                                tileResolver = texturePipeline,
+                                forceRebuild = (mesh.rebuildCount == 0)
+                            )) {
+                                submittedThisFrame++
+                            }
+                        }
+                    } else if (uploadToGpu) {
+                        mesh.buildMesh(currentWorld, texturePipeline, nativeBufferPool, currentFrameIndex)
+                        anyUpdated = true
+                        if (!c.isEmpty || mesh.generatedFacesCount > 0) {
+                            processed++
+                        }
+                    } else {
+                        mesh.generateMeshData(currentWorld, texturePipeline)
+                        anyUpdated = true
+                        if (!c.isEmpty || mesh.generatedFacesCount > 0) {
+                            processed++
+                        }
+                    }
+                } else if (uploadToGpu && mesh.hasPendingGpuUpload) {
+                    mesh.uploadCpuMeshToGpu(nativeBufferPool, currentFrameIndex)
+                    anyUpdated = true
                     processed++
                 }
-            } else if (uploadToGpu && mesh.hasPendingGpuUpload) {
-                mesh.uploadCpuMeshToGpu()
-                anyUpdated = true
-                processed++
             }
+        } finally {
+            dirtyQueueScratch.clear()
         }
-        dirtyQueueScratch.clear()
 
         if (anyUpdated || topologyChanged) {
             var rendered = 0
@@ -495,15 +573,16 @@ class WorldRenderer(
         cameraX: Float = 0f,
         cameraY: Float = 0f,
         cameraZ: Float = 0f,
-        sortByDistance: Boolean = false
+        sortByDistance: Boolean = false,
+        outList: MutableList<ChunkMesh> = visibleChunkMeshes
     ) {
         frustum.extractPlanes(viewProjectionMatrix)
-        visibleChunkMeshes.clear()
         var totalChunks = 0
         var emptySkipped = 0
         var frustumCulled = 0
 
         synchronized(meshSwapLock) {
+            outList.clear()
             totalChunks = chunkMeshes.size
             for (i in 0 until totalChunks) {
                 val mesh = chunkMeshes[i]
@@ -519,18 +598,18 @@ class WorldRenderer(
                         val dz = mesh.centerZ - cameraZ
                         mesh.sortDistSq = dx * dx + dy * dy + dz * dz
                     }
-                    visibleChunkMeshes.add(mesh)
+                    outList.add(mesh)
                 } else {
                     frustumCulled++
                 }
             }
         }
 
-        if (sortByDistance && visibleChunkMeshes.size > 1) {
-            sortMeshesAscendingByDistSq(visibleChunkMeshes)
+        if (sortByDistance && outList.size > 1) {
+            sortMeshesAscendingByDistSq(outList)
         }
 
-        visibleChunksCount = visibleChunkMeshes.size
+        visibleChunksCount = outList.size
         emptySkippedChunksCount = emptySkipped
         frustumCulledChunksCount = frustumCulled
     }
@@ -551,9 +630,10 @@ class WorldRenderer(
             cameraX = cameraX,
             cameraY = cameraY,
             cameraZ = cameraZ,
-            sortByDistance = sortFrontToBack
+            sortByDistance = sortFrontToBack,
+            outList = visibleChunkMeshes
         )
-        return visibleChunkMeshes.toList()
+        return synchronized(meshSwapLock) { visibleChunkMeshes.toList() }
     }
 
     /**
@@ -576,9 +656,10 @@ class WorldRenderer(
             cameraX = cameraX,
             cameraY = cameraY,
             cameraZ = cameraZ,
-            sortByDistance = true
+            sortByDistance = true,
+            outList = renderVisibleScratch
         )
-        val visibleChunks = visibleChunkMeshes
+        val visibleChunks = renderVisibleScratch
 
         val shader = worldShader ?: return
         if (shader.programId == 0) return
@@ -767,6 +848,7 @@ class WorldRenderer(
 
     fun release() {
         releaseWorldShadersAndHighlight()
+        parallelMesher.clearPending()
 
         val allToRelease = synchronized(meshSwapLock) {
             val combined = ArrayList<ChunkMesh>(chunkMeshes.size + pendingReleaseMeshes.size)
@@ -775,6 +857,7 @@ class WorldRenderer(
             chunkMeshes.clear()
             chunkMeshMap.clear()
             visibleChunkMeshes.clear()
+            renderVisibleScratch.clear()
             pendingReleaseMeshes.clear()
             combined
         }
@@ -787,19 +870,25 @@ class WorldRenderer(
 
     companion object {
         private const val MAX_MESH_UPLOADS_PER_FRAME = 6
-        private const val MAX_MESH_BUDGET_NS = 4_000_000L
+        private const val MAX_SUBMISSIONS_PER_FRAME = 8
+        private const val MAX_MESH_BUDGET_NS = 4_000_000L // 4ms
+        private const val MAX_DRAIN_BUDGET_NS = 8_000_000L // 8ms
 
-        /** Zero-allocation in-place insertion sort ascending by [ChunkMesh.sortDistSq]. */
+        /** Fast sort ascending by [ChunkMesh.sortDistSq]: insertion sort for small lists, TimSort for large. */
         private fun sortMeshesAscendingByDistSq(list: MutableList<ChunkMesh>) {
-            for (i in 1 until list.size) {
-                val key = list[i]
-                val keyDist = key.sortDistSq
-                var j = i - 1
-                while (j >= 0 && list[j].sortDistSq > keyDist) {
-                    list[j + 1] = list[j]
-                    j--
+            if (list.size <= 32) {
+                for (i in 1 until list.size) {
+                    val key = list[i]
+                    val keyDist = key.sortDistSq
+                    var j = i - 1
+                    while (j >= 0 && list[j].sortDistSq > keyDist) {
+                        list[j + 1] = list[j]
+                        j--
+                    }
+                    list[j + 1] = key
                 }
-                list[j + 1] = key
+            } else {
+                list.sortBy { it.sortDistSq }
             }
         }
     }

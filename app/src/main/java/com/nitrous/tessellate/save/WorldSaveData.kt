@@ -85,9 +85,11 @@ object EntityPersistenceRegistry {
             val itemId = (saved.extraData["itemId"] as? String)
                 ?.takeIf { it.isNotBlank() }
                 ?: ItemRegistry.DIRT.identifier.toCanonicalString()
+            val count = (saved.extraData["count"] as? Number)?.toInt()?.coerceAtLeast(1) ?: 1
             ItemDropEntity(
                 position = Vec3(saved.x, saved.y, saved.z),
-                itemId = itemId
+                itemId = itemId,
+                count = count
             )
         }
     }

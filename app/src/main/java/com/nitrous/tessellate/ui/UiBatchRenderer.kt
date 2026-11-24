@@ -1,8 +1,8 @@
 package com.nitrous.tessellate.ui
 
 import android.opengl.GLES30
-import com.nitrous.tessellate.graphics.Matrix4
 import com.nitrous.tessellate.graphics.Shader
+import com.nitrous.tessellate.math.Matrix4
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer

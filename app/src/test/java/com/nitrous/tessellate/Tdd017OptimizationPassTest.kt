@@ -7,7 +7,7 @@ import com.nitrous.tessellate.entity.ItemDropEntity
 import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.math.Vec3
 import com.nitrous.tessellate.player.Player
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.scene.WorldScene
 import com.nitrous.tessellate.texture.TexturePipeline
 import com.nitrous.tessellate.world.BlockPos
@@ -47,7 +47,7 @@ class Tdd017OptimizationPassTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context)
+        AndroidRegistryBootstrap.initialize(context)
         ShadowLog.clear()
     }
 

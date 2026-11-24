@@ -193,6 +193,36 @@ object VanillaSettingsRegistrar {
             }
         )
 
+        refs.registerProperty(
+            id = "Renderer.useNativeMemoryPooling",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.useNativeMemoryPooling },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(useNativeMemoryPooling = v) }
+            }
+        )
+
+        refs.registerProperty(
+            id = "Renderer.parallelChunkMeshing",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.parallelChunkMeshing },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(parallelChunkMeshing = v) }
+            }
+        )
+
+        refs.registerProperty(
+            id = "World.asyncMeshPrebuild",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.asyncMeshPrebuild },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(asyncMeshPrebuild = v) }
+            }
+        )
+
         refs.registerCommand(
             id = "Command.fly",
             commandLine = "/fly",
@@ -514,6 +544,48 @@ object VanillaSettingsRegistrar {
                 categoryId = CAT_DEBUG_RENDERING,
                 screen = SettingScreenTarget.DEBUG_OPTIONS,
                 order = 30
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:debug_native_memory_pooling",
+                label = "Use Native Memory Pooling",
+                description = "50 DirectByteBuffers with continuous 1/tick Flood GC",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "Renderer.useNativeMemoryPooling",
+                defaultValue = defaults.useNativeMemoryPooling,
+                categoryId = CAT_DEBUG_RENDERING,
+                screen = SettingScreenTarget.DEBUG_OPTIONS,
+                order = 40
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:debug_parallel_meshing",
+                label = "Parallel Chunk Meshing",
+                description = "Experimental worker-thread chunk meshing",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "Renderer.parallelChunkMeshing",
+                defaultValue = defaults.parallelChunkMeshing,
+                categoryId = CAT_DEBUG_RENDERING,
+                screen = SettingScreenTarget.DEBUG_OPTIONS,
+                order = 45
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:debug_async_mesh_prebuild",
+                label = "Async Mesh Prebuilding",
+                description = "Experimental off-thread chunk mesh prebuild",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "World.asyncMeshPrebuild",
+                defaultValue = defaults.asyncMeshPrebuild,
+                categoryId = CAT_DEBUG_RENDERING,
+                screen = SettingScreenTarget.DEBUG_OPTIONS,
+                order = 46
             )
         )
 

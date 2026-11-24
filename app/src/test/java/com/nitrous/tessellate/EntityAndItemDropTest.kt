@@ -10,7 +10,7 @@ import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.entity.ItemDropEntity
 import com.nitrous.tessellate.math.Vec3
 import com.nitrous.tessellate.scene.WorldScene
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.World
 import org.junit.Assert.assertEquals

@@ -7,8 +7,8 @@ import android.graphics.Color
 import android.opengl.GLES30
 import android.opengl.GLUtils
 import android.util.Log
-import com.nitrous.tessellate.graphics.Matrix4
 import com.nitrous.tessellate.graphics.Shader
+import com.nitrous.tessellate.math.Matrix4
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory

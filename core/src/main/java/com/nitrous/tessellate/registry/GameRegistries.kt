@@ -44,7 +44,7 @@ object GameRegistries {
         ItemRegistry.internalRegistry.freeze()
         com.nitrous.tessellate.item.RecipeRegistry.freeze()
         com.nitrous.tessellate.worldgen.WorldGenRegistry.freeze()
-        com.nitrous.tessellate.command.CommandRegistry.freeze()
+        RegistryBootstrap.freezeCommandDelegate()
     }
 
     /**

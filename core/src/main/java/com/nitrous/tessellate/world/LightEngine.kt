@@ -138,10 +138,14 @@ class LightEngine(
      * during chunk generation. Initializes `lightRendered` to match initial terrain lighting so new
      * chunks render cleanly right away.
      */
-    fun initializeChunkLighting(chunk: Chunk, world: World) {
+    fun initializeChunkLighting(
+        chunk: Chunk,
+        world: World,
+        chunkLookup: (Int, Int, Int) -> Chunk? = { cx, cy, cz -> world.getChunk(cx, cy, cz) }
+    ) {
         if (chunk.isEmpty) {
             val above = if (chunk.chunkY < world.chunksY - 1) {
-                world.getChunk(chunk.chunkX, chunk.chunkY + 1, chunk.chunkZ)
+                chunkLookup(chunk.chunkX, chunk.chunkY + 1, chunk.chunkZ)
             } else {
                 null
             }
@@ -171,7 +175,7 @@ class LightEngine(
         val rendered = ByteArray(Chunk.VOLUME)
 
         val above = if (chunk.chunkY < world.chunksY - 1) {
-            world.getChunk(chunk.chunkX, chunk.chunkY + 1, chunk.chunkZ)
+            chunkLookup(chunk.chunkX, chunk.chunkY + 1, chunk.chunkZ)
         } else {
             null
         }
@@ -223,11 +227,11 @@ class LightEngine(
         }
 
         // Also seed light entering horizontally/vertically from neighboring already-loaded chunks
-        val nWest = world.getChunk(chunk.chunkX - 1, chunk.chunkY, chunk.chunkZ)
-        val nEast = world.getChunk(chunk.chunkX + 1, chunk.chunkY, chunk.chunkZ)
-        val nBelow = if (chunk.chunkY > 0) world.getChunk(chunk.chunkX, chunk.chunkY - 1, chunk.chunkZ) else null
-        val nNorth = world.getChunk(chunk.chunkX, chunk.chunkY, chunk.chunkZ - 1)
-        val nSouth = world.getChunk(chunk.chunkX, chunk.chunkY, chunk.chunkZ + 1)
+        val nWest = chunkLookup(chunk.chunkX - 1, chunk.chunkY, chunk.chunkZ)
+        val nEast = chunkLookup(chunk.chunkX + 1, chunk.chunkY, chunk.chunkZ)
+        val nBelow = if (chunk.chunkY > 0) chunkLookup(chunk.chunkX, chunk.chunkY - 1, chunk.chunkZ) else null
+        val nNorth = chunkLookup(chunk.chunkX, chunk.chunkY, chunk.chunkZ - 1)
+        val nSouth = chunkLookup(chunk.chunkX, chunk.chunkY, chunk.chunkZ + 1)
 
         if (!allLit) {
             for (a in 0 until Chunk.SIZE) {
@@ -317,51 +321,11 @@ class LightEngine(
         System.arraycopy(intended, 0, rendered, 0, Chunk.VOLUME)
         chunk.setLightArrays(intended, rendered)
 
-        // Queue horizontal border seams into adjacent chunks only where neighbor cells need brightening
-        synchronized(lightLock) {
-            for (ly in 0 until Chunk.SIZE) {
-                for (lz in 0 until Chunk.SIZE) {
-                    if (nWest != null && !nWest.isCompletelyLit) {
-                        val bLevel = intended[(ly shl 8) or (lz shl 4)].toInt()
-                        if (bLevel > MIN_LIGHT + 1 &&
-                            !nWest.getBlockUnchecked(Chunk.MASK, ly, lz).isOpaque &&
-                            nWest.getIntendedLightUnchecked(Chunk.MASK, ly, lz) < bLevel - 1
-                        ) {
-                            enqueueAddLocked(baseX, baseY + ly, baseZ + lz, DIR_NONE)
-                        }
-                    }
-                    if (nEast != null && !nEast.isCompletelyLit) {
-                        val bLevel = intended[(ly shl 8) or (lz shl 4) or Chunk.MASK].toInt()
-                        if (bLevel > MIN_LIGHT + 1 &&
-                            !nEast.getBlockUnchecked(0, ly, lz).isOpaque &&
-                            nEast.getIntendedLightUnchecked(0, ly, lz) < bLevel - 1
-                        ) {
-                            enqueueAddLocked(baseX + Chunk.MASK, baseY + ly, baseZ + lz, DIR_NONE)
-                        }
-                    }
-                }
-                for (lx in 0 until Chunk.SIZE) {
-                    if (nNorth != null && !nNorth.isCompletelyLit) {
-                        val bLevel = intended[(ly shl 8) or lx].toInt()
-                        if (bLevel > MIN_LIGHT + 1 &&
-                            !nNorth.getBlockUnchecked(lx, ly, Chunk.MASK).isOpaque &&
-                            nNorth.getIntendedLightUnchecked(lx, ly, Chunk.MASK) < bLevel - 1
-                        ) {
-                            enqueueAddLocked(baseX + lx, baseY + ly, baseZ, DIR_NONE)
-                        }
-                    }
-                    if (nSouth != null && !nSouth.isCompletelyLit) {
-                        val bLevel = intended[(ly shl 8) or (Chunk.MASK shl 4) or lx].toInt()
-                        if (bLevel > MIN_LIGHT + 1 &&
-                            !nSouth.getBlockUnchecked(lx, ly, 0).isOpaque &&
-                            nSouth.getIntendedLightUnchecked(lx, ly, 0) < bLevel - 1
-                        ) {
-                            enqueueAddLocked(baseX + lx, baseY + ly, baseZ + Chunk.MASK, DIR_NONE)
-                        }
-                    }
-                }
-            }
-        }
+        // Schedule adjacent loaded chunks for background lighting update if they are not uniform
+        if (nWest != null && !nWest.isCompletelyLit && !nWest.isSolidOpaque) scheduleChunkLightUpdate(nWest)
+        if (nEast != null && !nEast.isCompletelyLit && !nEast.isSolidOpaque) scheduleChunkLightUpdate(nEast)
+        if (nNorth != null && !nNorth.isCompletelyLit && !nNorth.isSolidOpaque) scheduleChunkLightUpdate(nNorth)
+        if (nSouth != null && !nSouth.isCompletelyLit && !nSouth.isSolidOpaque) scheduleChunkLightUpdate(nSouth)
     }
 
     private fun seedLocalIfBrighter(

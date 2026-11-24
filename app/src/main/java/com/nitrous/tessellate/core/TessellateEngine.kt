@@ -13,7 +13,7 @@ import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.graphics.OpenGlEs3Backend
 import com.nitrous.tessellate.input.TouchInputController
 import com.nitrous.tessellate.modding.LuaModRuntime
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.save.WorldSaveData
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.save.WorldSaveStorage
@@ -68,7 +68,7 @@ class TessellateEngine(
 
     // 1-4. Initialize registries, load JSON content definitions, resolve relationships, and freeze
     private val contentInitialized: Boolean = run {
-        RegistryBootstrap.initialize(context)
+        AndroidRegistryBootstrap.initialize(context)
         true
     }
 
@@ -172,29 +172,35 @@ class TessellateEngine(
         touchController.uiScale = sanitized.uiScale
         touchController.recomputeControlBounds()
 
-        worldScene.player.autoJump = sanitized.autoJump
-        worldScene.configuredRenderDistance = sanitized.renderDistance
-        if (!worldScene.world.isDestroyed && worldScene.world.isInfinite &&
-            worldScene.world.renderDistance != sanitized.renderDistance
-        ) {
-            worldScene.world.updateRenderDistance(
-                newDistance = sanitized.renderDistance,
-                playerX = worldScene.player.posX,
-                playerZ = worldScene.player.posZ,
-                texturePipeline = texturePipeline
-            )
-        }
+        synchronized(modeLock) {
+            worldScene.player.autoJump = sanitized.autoJump
+            worldScene.configuredRenderDistance = sanitized.renderDistance
+            worldScene.asyncMeshPrebuildEnabled = sanitized.asyncMeshPrebuild
+            worldScene.worldRenderer.showHitboxes = sanitized.showHitboxes
+            worldScene.worldRenderer.useNativeMemoryPooling = sanitized.useNativeMemoryPooling
+            worldScene.worldRenderer.parallelMeshingEnabled = sanitized.parallelChunkMeshing
+            worldScene.profiler.enabled = sanitized.enableNanoTimeProfiler
 
-        worldScene.worldRenderer.showHitboxes = sanitized.showHitboxes
-        worldScene.profiler.enabled = sanitized.enableNanoTimeProfiler
-        uiRenderer.showCoordinates = sanitized.showCoordinates
-        uiRenderer.showDebugHud = sanitized.showDebugHud
-        val prevScale = uiRenderer.uiScale
-        uiRenderer.uiScale = sanitized.uiScale
-        if (prevScale == uiRenderer.uiScale) {
-            uiRenderer.settingsScreen.refreshDynamicState()
-        } else {
-            uiRenderer.invalidateHud()
+            if (!worldScene.world.isDestroyed && worldScene.world.isInfinite &&
+                worldScene.world.renderDistance != sanitized.renderDistance
+            ) {
+                worldScene.world.updateRenderDistance(
+                    newDistance = sanitized.renderDistance,
+                    playerX = worldScene.player.posX,
+                    playerZ = worldScene.player.posZ,
+                    meshPrebuilder = if (sanitized.asyncMeshPrebuild) texturePipeline else null
+                )
+            }
+
+            uiRenderer.showCoordinates = sanitized.showCoordinates
+            uiRenderer.showDebugHud = sanitized.showDebugHud
+            val prevScale = uiRenderer.uiScale
+            uiRenderer.uiScale = sanitized.uiScale
+            if (prevScale == uiRenderer.uiScale) {
+                uiRenderer.settingsScreen.refreshDynamicState()
+            } else {
+                uiRenderer.invalidateHud()
+            }
         }
     }
 
@@ -242,6 +248,10 @@ class TessellateEngine(
     private var lastFrameTimeNs: Long = 0
     private var frameCount: Int = 0
     private var fpsTimerNs: Long = 0
+
+    @Volatile
+    var currentFrameIndex: Long = 0L
+        private set
 
     // Touch interaction state for showcase mode
     private var lastTouchX: Float = 0f
@@ -548,63 +558,62 @@ class TessellateEngine(
             fpsTimerNs = currentNs
         }
 
-        // Flush any UI-thread texture filter mode toggles or deferred GPU cleanup requests safely on the GL thread
-        texturePipeline.applyPendingFilterMode()
-        if (gl != null) {
-            worldScene.worldRenderer.processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
-        }
-
-        val frameAppState: AppState
-        val frameMode: SceneMode
-        val framePaused: Boolean
         synchronized(modeLock) {
-            frameAppState = currentAppState
-            frameMode = currentSceneMode
-            framePaused = isPaused
-        }
+            val activeFrameIndex = ++currentFrameIndex
+            worldScene.renderFrameIndex = activeFrameIndex
+            worldScene.worldRenderer.nativeBufferPool.floodGcTick(activeFrameIndex)
 
-        if (frameAppState == AppState.INVENTORY) {
-            // Pause 3D world physics/ticking while rendering the frozen 3D world behind the inventory overlay
-            backend.clear(0.45f, 0.65f, 1.0f, 1.0f)
-            when (frameMode) {
-                SceneMode.WORLD -> worldScene.render(this)
-                SceneMode.SHOWCASE -> showcaseScene.render(this)
+            // Flush any UI-thread texture filter mode toggles or deferred GPU cleanup requests safely on the GL thread
+            texturePipeline.applyPendingFilterMode()
+            if (gl != null) {
+                worldScene.worldRenderer.processPendingGpuFlushIfSafe(texturePipeline, isGlThread = true)
             }
-            uiRenderer.renderUi(this, frameMode, AppState.INVENTORY, isPaused = false)
-            applyFrameRateCap(gl, frameStartNs)
-            return
-        }
 
-        if (frameAppState != AppState.PLAYING) {
-            // Pause 3D world physics/ticking and render 2D UI over a solid background color
-            backend.clear(0.09f, 0.11f, 0.14f, 1.0f)
-            uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = false)
-            applyFrameRateCap(gl, frameStartNs)
-            return
-        }
+            val frameAppState = currentAppState
+            val frameMode = currentSceneMode
+            val framePaused = isPaused
 
-        // Clear framebuffer to sky blue before rendering 3D world geometry
-        backend.clear(0.45f, 0.65f, 1.0f, 1.0f)
-
-        // Update and Render Active 3D Scene (pause updates when Pause Menu is open)
-        when (frameMode) {
-            SceneMode.WORLD -> {
-                if (!framePaused && currentSceneMode == SceneMode.WORLD && currentAppState == AppState.PLAYING && !isPaused) {
-                    worldScene.updatePlayer(deltaSec, touchController, camera)
-                    worldScene.update(deltaSec)
+            when {
+                frameAppState == AppState.INVENTORY -> {
+                    // Pause 3D world physics/ticking while rendering the frozen 3D world behind the inventory overlay
+                    backend.clear(0.45f, 0.65f, 1.0f, 1.0f)
+                    when (frameMode) {
+                        SceneMode.WORLD -> worldScene.render(this)
+                        SceneMode.SHOWCASE -> showcaseScene.render(this)
+                    }
+                    uiRenderer.renderUi(this, frameMode, AppState.INVENTORY, isPaused = false)
                 }
-                worldScene.render(this)
-            }
-            SceneMode.SHOWCASE -> {
-                if (!framePaused) {
-                    showcaseScene.update(deltaSec)
+                frameAppState != AppState.PLAYING -> {
+                    // Pause 3D world physics/ticking and render 2D UI over a solid background color
+                    backend.clear(0.09f, 0.11f, 0.14f, 1.0f)
+                    uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = false)
                 }
-                showcaseScene.render(this)
+                else -> {
+                    // Clear framebuffer to sky blue before rendering 3D world geometry
+                    backend.clear(0.45f, 0.65f, 1.0f, 1.0f)
+
+                    // Update and Render Active 3D Scene (pause updates when Pause Menu is open)
+                    when (frameMode) {
+                        SceneMode.WORLD -> {
+                            if (!framePaused) {
+                                worldScene.updatePlayer(deltaSec, touchController, camera)
+                                worldScene.update(deltaSec)
+                            }
+                            worldScene.render(this)
+                        }
+                        SceneMode.SHOWCASE -> {
+                            if (!framePaused) {
+                                showcaseScene.update(deltaSec)
+                            }
+                            showcaseScene.render(this)
+                        }
+                    }
+
+                    // Render In-Game Textured UI, Multitouch D-Pad, and HUD (or Pause Menu overlay)
+                    uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = framePaused)
+                }
             }
         }
-
-        // Render In-Game Textured UI, Multitouch D-Pad, and HUD (or Pause Menu overlay)
-        uiRenderer.renderUi(this, frameMode, frameAppState, isPaused = framePaused)
         applyFrameRateCap(gl, frameStartNs)
     }
 
@@ -716,9 +725,11 @@ class TessellateEngine(
 
     override fun onPause() {
         Log.i(TAG, "TessellateEngine: onPause")
-        touchController.resetAllInputs()
-        if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
-            worldScene.saveCurrentWorld(blocking = false)
+        synchronized(modeLock) {
+            touchController.resetAllInputs()
+            if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
+                worldScene.saveCurrentWorld(blocking = false)
+            }
         }
     }
 
@@ -729,18 +740,22 @@ class TessellateEngine(
 
     override fun onDestroy() {
         Log.i(TAG, "TessellateEngine: onDestroy - Releasing resources")
-        touchController.resetAllInputs()
-        if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
-            if (currentAppState == AppState.INVENTORY) {
-                uiRenderer.inventoryScreen.returnAllItemsAndReset()
+        synchronized(modeLock) {
+            touchController.resetAllInputs()
+            if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
+                if (currentAppState == AppState.INVENTORY) {
+                    uiRenderer.inventoryScreen.returnAllItemsAndReset()
+                }
+                worldScene.saveCurrentWorld(blocking = true)
             }
-            worldScene.saveCurrentWorld(blocking = true)
+            worldScene.worldRenderer.parallelMesher.shutdown()
+            worldScene.worldRenderer.nativeBufferPool.release()
+            worldScene.release()
+            showcaseScene.release()
+            uiRenderer.release()
+            texturePipeline.release()
+            backend.release()
         }
-        worldScene.release()
-        showcaseScene.release()
-        uiRenderer.release()
-        texturePipeline.release()
-        backend.release()
     }
 
     companion object {

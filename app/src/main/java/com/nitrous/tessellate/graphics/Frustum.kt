@@ -1,6 +1,6 @@
 package com.nitrous.tessellate.graphics
 
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import kotlin.math.sqrt
 
 /**

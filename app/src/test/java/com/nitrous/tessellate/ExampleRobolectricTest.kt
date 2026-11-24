@@ -5,11 +5,11 @@ import androidx.test.core.app.ApplicationProvider
 import com.nitrous.tessellate.core.TessellateEngine
 import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.ui.TexturedUiRenderer
-import com.nitrous.tessellate.graphics.Matrix4
+import com.nitrous.tessellate.math.Matrix4
 import com.nitrous.tessellate.input.TouchInputController
 import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.texture.TextureConstants
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.BlockPos
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.Chunk

@@ -10,12 +10,12 @@ import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.entity.ItemDropEntity
 import com.nitrous.tessellate.item.ItemStack
 import com.nitrous.tessellate.math.Vec3
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.save.EntityPersistenceRegistry
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.settings.GameSettings
 import com.nitrous.tessellate.settings.SettingsManager
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.Chunk
 import com.nitrous.tessellate.world.ChunkPos
@@ -48,7 +48,7 @@ class Tdd015SaveSystemAndPersistenceTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
         WorldSaveManager.getSavesRootDir(context).deleteRecursively()
         SettingsManager.resolveSettingsFile(context).delete()
     }

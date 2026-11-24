@@ -1,7 +1,7 @@
 package com.nitrous.tessellate.entity
 
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.math.Vec3
-import com.nitrous.tessellate.world.AABB
 import com.nitrous.tessellate.world.World
 
 /**
@@ -41,6 +41,13 @@ abstract class Entity(
 
     /** Restores subclass- or mod-specific fields from deserialized JSON data. */
     open fun readExtraData(data: Map<String, Any?>) = Unit
+
+    /**
+     * Builds or updates a platform-independent [EntityRenderState] snapshot for renderers.
+     */
+    open fun updateRenderState(reuse: EntityRenderState? = null): EntityRenderState? = null
+
+    fun createRenderState(): EntityRenderState? = updateRenderState(null)
 
     /**
      * Advances entity physics by [deltaTime] seconds and updates the cached AABB once.

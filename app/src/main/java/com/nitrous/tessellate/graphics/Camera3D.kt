@@ -1,6 +1,7 @@
 package com.nitrous.tessellate.graphics
 
 import com.nitrous.tessellate.core.ICamera
+import com.nitrous.tessellate.math.Matrix4
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt

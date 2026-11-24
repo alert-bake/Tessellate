@@ -5,7 +5,9 @@ import android.util.Log
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,8 +32,14 @@ class SettingsManager(
 
     val settingsFile: File = resolveSettingsFile(context)
 
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val ioExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        if (throwable !is CancellationException) {
+            Log.e(TAG, "Async settings operation failed safely", throwable)
+        }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher + ioExceptionHandler)
     private val fileLock = Any()
+    private val stateLock = Any()
 
     @Volatile
     var lastSaveJob: Job? = null
@@ -39,6 +47,9 @@ class SettingsManager(
 
     @Volatile
     private var saveVersion: Int = 0
+
+    @Volatile
+    private var lastWrittenVersion: Int = 0
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -59,13 +70,20 @@ class SettingsManager(
      * when missing or invalid.
      */
     fun loadSettings(onLoaded: ((GameSettings) -> Unit)? = null): Job {
-        val loadStartVersion = saveVersion
+        val loadStartVersion = synchronized(stateLock) { saveVersion }
         return scope.launch(ioDispatcher) {
             val loaded = readSettingsFromDisk()
             withContext(mainDispatcher) {
-                if (saveVersion == loadStartVersion) {
-                    settings = loaded
-                    _settingsFlow.value = loaded
+                val applied = synchronized(stateLock) {
+                    if (saveVersion == loadStartVersion) {
+                        settings = loaded
+                        _settingsFlow.value = loaded
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (applied) {
                     onLoaded?.invoke(loaded)
                 }
             }
@@ -77,8 +95,10 @@ class SettingsManager(
      */
     fun loadSettingsBlocking(): GameSettings {
         val loaded = readSettingsFromDisk()
-        settings = loaded
-        _settingsFlow.value = loaded
+        synchronized(stateLock) {
+            settings = loaded
+            _settingsFlow.value = loaded
+        }
         return loaded
     }
 
@@ -90,11 +110,13 @@ class SettingsManager(
         onComplete: ((Boolean) -> Unit)? = null
     ): Job {
         val sanitized = sanitize(newSettings)
-        saveVersion++
-        settings = sanitized
-        _settingsFlow.value = sanitized
+        synchronized(stateLock) {
+            saveVersion++
+            settings = sanitized
+            _settingsFlow.value = sanitized
+        }
         val job = scope.launch(ioDispatcher) {
-            val success = writeSettingsToDisk(sanitized)
+            val success = writeLatestSettingsToDisk()
             if (onComplete != null) {
                 withContext(mainDispatcher) {
                     onComplete(success)
@@ -103,6 +125,24 @@ class SettingsManager(
         }
         lastSaveJob = job
         return job
+    }
+
+    private fun writeLatestSettingsToDisk(): Boolean = synchronized(fileLock) {
+        val (targetVersion, snapshot) = synchronized(stateLock) {
+            saveVersion to settings
+        }
+        if (targetVersion <= lastWrittenVersion) {
+            return true
+        }
+        val ok = writeSettingsToDisk(snapshot)
+        if (ok) {
+            synchronized(stateLock) {
+                if (targetVersion > lastWrittenVersion) {
+                    lastWrittenVersion = targetVersion
+                }
+            }
+        }
+        return ok
     }
 
     /**
@@ -204,6 +244,9 @@ class SettingsManager(
                 showDebugHud = readBoolean("showDebugHud", defaults.showDebugHud),
                 showHitboxes = readBoolean("showHitboxes", defaults.showHitboxes),
                 enableNanoTimeProfiler = readBoolean("enableNanoTimeProfiler", defaults.enableNanoTimeProfiler),
+                useNativeMemoryPooling = readBoolean("useNativeMemoryPooling", defaults.useNativeMemoryPooling),
+                parallelChunkMeshing = readBoolean("parallelChunkMeshing", defaults.parallelChunkMeshing),
+                asyncMeshPrebuild = readBoolean("asyncMeshPrebuild", defaults.asyncMeshPrebuild),
                 modValues = modMap
             )
         )
@@ -282,6 +325,9 @@ class SettingsManager(
             showDebugHud = candidate.showDebugHud,
             showHitboxes = candidate.showHitboxes,
             enableNanoTimeProfiler = candidate.enableNanoTimeProfiler,
+            useNativeMemoryPooling = candidate.useNativeMemoryPooling,
+            parallelChunkMeshing = candidate.parallelChunkMeshing,
+            asyncMeshPrebuild = candidate.asyncMeshPrebuild,
             modValues = candidate.modValues.toMap()
         )
     }

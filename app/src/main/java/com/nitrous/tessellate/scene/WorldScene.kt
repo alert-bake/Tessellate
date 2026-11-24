@@ -7,19 +7,20 @@ import com.nitrous.tessellate.core.IGraphicsRuntime
 import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.entity.EntityRenderer
 import com.nitrous.tessellate.entity.ItemDropEntity
+import com.nitrous.tessellate.entity.ItemDropMerger
 import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.input.TouchInputController
 import com.nitrous.tessellate.item.Inventory
 import com.nitrous.tessellate.item.Item
 import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.item.ItemStack
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.math.Vec3
 import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.save.SavedHotbarSlot
 import com.nitrous.tessellate.save.WorldSaveData
 import com.nitrous.tessellate.save.WorldSaveStorage
 import com.nitrous.tessellate.texture.TexturePipeline
-import com.nitrous.tessellate.world.AABB
 import com.nitrous.tessellate.world.BlockPos
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.GameMode
@@ -96,12 +97,27 @@ class WorldScene : IGameScene {
     @Volatile
     private var cachedTexturePipeline: TexturePipeline? = null
 
+    @Volatile
+    var asyncMeshPrebuildEnabled: Boolean = false
+
+    private fun resolveMeshPrebuilder(overridePipeline: TexturePipeline? = cachedTexturePipeline): TexturePipeline? {
+        return if (asyncMeshPrebuildEnabled) (overridePipeline ?: cachedTexturePipeline) else null
+    }
+
     val profiler = FrameProfiler()
 
     private val pickupEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
     private val renderEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
-    private val viewProjScratch = com.nitrous.tessellate.graphics.Matrix4.create()
+    private val viewProjScratch = com.nitrous.tessellate.math.Matrix4.create()
     private val placementBoxScratch = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+
+    @Volatile
+    var renderFrameIndex: Long = 0L
+
+    var lastMergeCandidateChecks: Int = 0
+        private set
+    var lastMergedDropsCount: Int = 0
+        private set
 
     @Volatile
     private var hasInitializedSpawn = false
@@ -115,7 +131,7 @@ class WorldScene : IGameScene {
                 player.spawnAtSurface(world, 24.5f, 24.5f)
                 hasInitializedSpawn = true
             }
-            world.streamChunksAround(player.posX, player.posZ, cachedTexturePipeline)
+            world.streamChunksAround(player.posX, player.posZ, resolveMeshPrebuilder())
         }
 
         val camera = runtime.camera as? Camera3D
@@ -171,7 +187,7 @@ class WorldScene : IGameScene {
         newWorld.streamChunksAround(
             playerX = player.posX,
             playerZ = player.posZ,
-            texturePipeline = texturePipeline ?: cachedTexturePipeline,
+            meshPrebuilder = resolveMeshPrebuilder(texturePipeline),
             forceCheck = true
         )
 
@@ -241,7 +257,7 @@ class WorldScene : IGameScene {
         loadedWorld.streamChunksAround(
             playerX = player.posX,
             playerZ = player.posZ,
-            texturePipeline = texturePipeline ?: cachedTexturePipeline,
+            meshPrebuilder = resolveMeshPrebuilder(texturePipeline),
             forceCheck = true
         )
     }
@@ -332,6 +348,7 @@ class WorldScene : IGameScene {
     }
 
     fun updatePlayer(deltaTimeSeconds: Float, touchInput: TouchInputController, camera: Camera3D) {
+        if (world.isDestroyed) return
         // Update player movement, collision, gravity, flight, auto-jump, crouching
         player.update(
             deltaTime = deltaTimeSeconds,
@@ -415,7 +432,7 @@ class WorldScene : IGameScene {
 
         val profileEnabled = profiler.enabled
         val streamStartNs = if (profileEnabled) System.nanoTime() else 0L
-        world.streamChunksAround(player.posX, player.posZ, cachedTexturePipeline)
+        world.streamChunksAround(player.posX, player.posZ, resolveMeshPrebuilder())
         val chunkGenMs = if (profileEnabled) {
             val streamCallMs = (System.nanoTime() - streamStartNs) * FrameProfiler.NS_TO_MS
             maxOf(streamCallMs, world.lastChunkGenMs)
@@ -427,6 +444,7 @@ class WorldScene : IGameScene {
 
         val entityStartNs = if (profileEnabled) System.nanoTime() else 0L
         world.tickEntities(deltaTimeSeconds, player.posX, player.posZ)
+        mergeNearbyItemDrops(minTickCount = 1)
         checkItemPickups()
         val entityUpdatesMs = if (profileEnabled) (System.nanoTime() - entityStartNs) * FrameProfiler.NS_TO_MS else 0f
 
@@ -451,8 +469,20 @@ class WorldScene : IGameScene {
     }
 
     /**
+     * NHPHP Entity Merging (TDD-022 / TDD-022.1):
+     * Delegates to `:core`'s [ItemDropMerger] on [World] to fuse identical drops within 1.5 blocks
+     * with a cap of 5 candidate checks per entity per tick.
+     */
+    fun mergeNearbyItemDrops(minTickCount: Int = 0): Int {
+        val result = world.mergeNearbyItemDrops(minTickCount = minTickCount)
+        lastMergeCandidateChecks = result.candidateChecks
+        lastMergedDropsCount = result.mergedCount
+        return result.mergedCount
+    }
+
+    /**
      * Checks if the player's AABB intersects any active [ItemDropEntity].
-     * On intersection, removes the entity and stacks 1 item into the player's inventory.
+     * On intersection, transfers as many items from [ItemDropEntity.count] into inventory as fit.
      */
     fun checkItemPickups() {
         player.updateBoundingBox()
@@ -461,10 +491,14 @@ class WorldScene : IGameScene {
             val entity = pickupEntitiesScratch[i]
             if (entity is ItemDropEntity && !entity.isRemoved && !entity.isSleeping) {
                 if (player.boundingBox.intersects(entity.boundingBox)) {
-                    val remaining = player.inventory.addItem(entity.itemId, 1)
-                    if (remaining == 0) {
+                    val beforeCount = entity.count
+                    val remaining = player.inventory.addItem(entity.itemId, beforeCount)
+                    if (remaining <= 0) {
                         entity.isRemoved = true
                         world.removeEntity(entity)
+                        syncSelectedItemFromInventory()
+                    } else if (remaining < beforeCount) {
+                        entity.count = remaining
                         syncSelectedItemFromInventory()
                     }
                 }
@@ -510,6 +544,7 @@ class WorldScene : IGameScene {
         if (!isGlInitialized) {
             init(runtime)
         }
+        if (world.isDestroyed) return
 
         // Configure OpenGL ES 3.0 render state
         runtime.backend.setDepthTest(true)
@@ -527,7 +562,8 @@ class WorldScene : IGameScene {
             texturePipeline = pipeline,
             uploadToGpu = true,
             focusX = player.posX,
-            focusZ = player.posZ
+            focusZ = player.posZ,
+            currentFrameIndex = renderFrameIndex
         )
         val meshBuildMs = if (profileEnabled) (System.nanoTime() - meshStartNs) * FrameProfiler.NS_TO_MS else 0f
 
@@ -781,5 +817,12 @@ class WorldScene : IGameScene {
     companion object {
         /** Periodic autosave interval in seconds (5 minutes). */
         const val AUTOSAVE_INTERVAL_SECONDS: Float = 300f
+
+        /** Horizontal/3D item drop fusion distance (1.5 blocks per TDD-022 / :core). */
+        const val ITEM_MERGE_RADIUS_BLOCKS: Float = ItemDropMerger.ITEM_MERGE_RADIUS_BLOCKS
+        const val ITEM_MERGE_RADIUS_SQ: Float = ItemDropMerger.ITEM_MERGE_RADIUS_SQ
+
+        /** Maximum nearby candidate comparisons per entity per tick (NHPHP O(n^2) prevention). */
+        const val MAX_MERGE_CHECKS_PER_ENTITY: Int = ItemDropMerger.MAX_MERGE_CHECKS_PER_ENTITY
     }
 }

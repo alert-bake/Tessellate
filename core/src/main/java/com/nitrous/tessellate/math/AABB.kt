@@ -1,4 +1,4 @@
-package com.nitrous.tessellate.world
+package com.nitrous.tessellate.math
 
 /**
  * Axis-Aligned Bounding Box (AABB) for 3D voxel collision detection.

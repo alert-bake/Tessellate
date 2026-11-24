@@ -8,14 +8,14 @@ import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.nitrous.tessellate.core.AppState
 import com.nitrous.tessellate.core.TessellateEngine
-import com.nitrous.tessellate.graphics.Matrix4
+import com.nitrous.tessellate.math.Matrix4
 import com.nitrous.tessellate.graphics.Shader
 import com.nitrous.tessellate.item.ItemStack
 import com.nitrous.tessellate.modding.ModApprovalStatus
 import com.nitrous.tessellate.modding.ModCodeInspector
 import com.nitrous.tessellate.modding.ModPermissions
 import com.nitrous.tessellate.modding.PermissionsYmlParser
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.settings.GameSettings
 import com.nitrous.tessellate.settings.ReferenceOrigin
@@ -65,7 +65,7 @@ class Tdd016SettingsAndModdingTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
         cleanupFiles()
     }
 

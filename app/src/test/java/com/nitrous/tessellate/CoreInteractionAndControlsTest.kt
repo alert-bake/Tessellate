@@ -10,10 +10,10 @@ import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.registry.DuplicateIdentifierException
 import com.nitrous.tessellate.registry.Identifier
 import com.nitrous.tessellate.registry.Namespaces
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.registry.RegistryFrozenException
 import com.nitrous.tessellate.scene.WorldScene
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.BlockPos
 import com.nitrous.tessellate.world.BlockType
 import com.nitrous.tessellate.world.Direction
@@ -58,7 +58,7 @@ class CoreInteractionAndControlsTest {
             }
         """.trimIndent()
         try {
-            RegistryBootstrap.initialize(
+            AndroidRegistryBootstrap.initialize(
                 extraItemJsons = listOf(customItemJson),
                 forceReinitialize = true
             )
@@ -68,7 +68,7 @@ class CoreInteractionAndControlsTest {
             assertEquals(32, loaded?.maxStackSize)
             assertEquals(ItemType.MATERIAL, loaded?.itemType)
         } finally {
-            RegistryBootstrap.initialize(forceReinitialize = true)
+            AndroidRegistryBootstrap.initialize(forceReinitialize = true)
         }
     }
 
@@ -97,7 +97,7 @@ class CoreInteractionAndControlsTest {
         // Duplicate / case-only collisions are rejected during bootstrap before freeze
         try {
             assertThrows(DuplicateIdentifierException::class.java) {
-                RegistryBootstrap.initialize(
+                AndroidRegistryBootstrap.initialize(
                     forceReinitialize = true,
                     preFreezeHook = {
                         ItemRegistry.register(Item(Identifier.of(Namespaces.TESSELLATE, "stone"), "Duplicate Stone"))
@@ -105,7 +105,7 @@ class CoreInteractionAndControlsTest {
                 )
             }
             assertThrows(DuplicateIdentifierException::class.java) {
-                RegistryBootstrap.initialize(
+                AndroidRegistryBootstrap.initialize(
                     forceReinitialize = true,
                     preFreezeHook = {
                         ItemRegistry.register(Item(Identifier.of("tessellate", "STONE"), "Capitalized Stone"))
@@ -113,7 +113,7 @@ class CoreInteractionAndControlsTest {
                 )
             }
         } finally {
-            RegistryBootstrap.initialize(forceReinitialize = true)
+            AndroidRegistryBootstrap.initialize(forceReinitialize = true)
         }
     }
 

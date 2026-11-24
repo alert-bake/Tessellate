@@ -153,9 +153,9 @@ class Tdd010InventoryAndPickupTest {
             }
         }
         val dirtPositions = listOf(
-            BlockPos(21, 6, 20),
+            BlockPos(20, 6, 20),
             BlockPos(22, 6, 20),
-            BlockPos(23, 6, 20)
+            BlockPos(24, 6, 20)
         )
         dirtPositions.forEach { scene.world.setBlock(it, BlockType.DIRT) }
 
@@ -185,7 +185,7 @@ class Tdd010InventoryAndPickupTest {
         assertEquals(0, scene.player.inventory.getTotalCount("tessellate:dirt"))
 
         // Walk player over drop #1, drop #2, drop #3 sequentially and verify count updates 1 -> 2 -> 3
-        scene.player.posX = 21.5f
+        scene.player.posX = 20.5f
         scene.player.posZ = 20.5f
         scene.update(1f / 60f)
         assertTrue(drops[0].isRemoved)
@@ -197,7 +197,7 @@ class Tdd010InventoryAndPickupTest {
         assertTrue(drops[1].isRemoved)
         assertEquals(2, scene.player.inventory.getSlot(0)?.count)
 
-        scene.player.posX = 23.5f
+        scene.player.posX = 24.5f
         scene.player.posZ = 20.5f
         scene.update(1f / 60f)
         assertTrue(drops[2].isRemoved)

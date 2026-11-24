@@ -21,6 +21,9 @@ data class GameSettings(
     var showDebugHud: Boolean = true,
     var showHitboxes: Boolean = false,
     var enableNanoTimeProfiler: Boolean = false,
+    var useNativeMemoryPooling: Boolean = false,
+    var parallelChunkMeshing: Boolean = false,
+    var asyncMeshPrebuild: Boolean = false,
     var modValues: Map<String, String> = emptyMap()
 ) {
     companion object {

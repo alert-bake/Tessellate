@@ -5,9 +5,13 @@ import android.util.Log
 import com.nitrous.tessellate.entity.Entity
 import com.nitrous.tessellate.world.Chunk
 import com.nitrous.tessellate.world.ChunkPos
+import com.nitrous.tessellate.world.World
+import com.nitrous.tessellate.world.WorldChunkStorage
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -154,12 +158,7 @@ object WorldSaveManager {
 
     fun serializeChunkEntities(data: ChunkEntityFileData): String = chunkEntitiesAdapter.toJson(data)
 
-    fun chunkEntityPos(entity: Entity, chunksY: Int): ChunkPos {
-        val cx = floor(entity.position.x).toInt() shr 4
-        val cy = (floor(entity.position.y).toInt() shr 4).coerceIn(0, (chunksY - 1).coerceAtLeast(0))
-        val cz = floor(entity.position.z).toInt() shr 4
-        return ChunkPos(cx, cy, cz)
-    }
+    fun chunkEntityPos(entity: Entity, chunksY: Int): ChunkPos = World.chunkEntityPos(entity, chunksY)
 }
 
 /**
@@ -169,12 +168,17 @@ object WorldSaveManager {
 class WorldSaveStorage(
     val worldDir: File,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-) {
+) : WorldChunkStorage {
     val chunksDir = File(worldDir, WorldSaveManager.CHUNKS_DIR_NAME)
     val entitiesDir = File(worldDir, WorldSaveManager.ENTITIES_DIR_NAME)
     val levelFile = File(worldDir, WorldSaveManager.LEVEL_FILE_NAME)
 
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val ioExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        if (throwable !is CancellationException) {
+            Log.e(TAG, "Async world save operation failed safely", throwable)
+        }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher + ioExceptionHandler)
     private val activeJobs: MutableSet<Job> = Collections.synchronizedSet(HashSet())
     private val fileLocks = ConcurrentHashMap<ChunkPos, Any>()
     private val levelLock = Any()
@@ -207,7 +211,7 @@ class WorldSaveStorage(
      * 100%-air chunks) and its entities JSON file. Buffers the snapshot in-memory under
      * versioned maps first so an immediate reload sees the latest state even before I/O completes.
      */
-    fun saveChunkAndEntitiesAsync(chunk: Chunk, chunkEntities: List<Entity>): Job {
+    override fun saveChunkAndEntitiesAsync(chunk: Chunk, chunkEntities: List<Entity>): Job {
         val pos = ChunkPos(chunk.chunkX, chunk.chunkY, chunk.chunkZ)
         val bytesCopy: ByteArray? = if (isAllAir(chunk.blocks)) null else chunk.blocks.copyOf()
         val serializedEntities = chunkEntities.map { EntityPersistenceRegistry.serialize(it) }
@@ -218,7 +222,13 @@ class WorldSaveStorage(
         pendingEntityWrites[pos] = PendingEntityWrite(entityVer, serializedEntities)
 
         val job = scope.launch(ioDispatcher) {
-            writeChunkAndEntitiesInternal(pos, bytesCopy, chunkVer, serializedEntities, entityVer)
+            try {
+                writeChunkAndEntitiesInternal(pos, bytesCopy, chunkVer, serializedEntities, entityVer)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed async chunk/entity save for $pos", t)
+            }
         }
         trackJob(job)
         lastSaveJob = job
@@ -285,7 +295,7 @@ class WorldSaveStorage(
      * Reads raw 4096-byte chunk data if saved (checking any pending async write first),
      * or returns `null` if no non-empty saved chunk exists on disk.
      */
-    fun loadChunkBytes(pos: ChunkPos): ByteArray? {
+    override fun loadChunkBytes(pos: ChunkPos): ByteArray? {
         pendingChunkWrites[pos]?.let { pending ->
             return pending.bytes?.copyOf()
         }
@@ -308,7 +318,7 @@ class WorldSaveStorage(
     /**
      * Reads saved entities for [pos] (checking any pending async write first) and instantiates them.
      */
-    fun loadEntities(pos: ChunkPos): List<Entity> {
+    override fun loadEntities(pos: ChunkPos): List<Entity> {
         pendingEntityWrites[pos]?.let { pending ->
             return pending.entities.mapNotNull { EntityPersistenceRegistry.deserialize(it) }
         }
@@ -342,7 +352,13 @@ class WorldSaveStorage(
     fun saveLevelDataAsync(data: WorldSaveData): Job {
         val normalized = data.copy(folderName = worldDir.name)
         val job = scope.launch(ioDispatcher) {
-            saveLevelDataSync(normalized)
+            try {
+                saveLevelDataSync(normalized)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed async level.json save", t)
+            }
         }
         trackJob(job)
         lastSaveJob = job
@@ -372,15 +388,21 @@ class WorldSaveStorage(
         val normalizedLevel = saveData.copy(folderName = worldDir.name)
 
         val job = scope.launch(ioDispatcher) {
-            saveLevelDataSync(normalizedLevel)
-            for (entry in chunkSnapshots) {
-                writeChunkAndEntitiesInternal(
-                    entry.pos,
-                    entry.bytes,
-                    entry.chunkVer,
-                    entry.entities,
-                    entry.entityVer
-                )
+            try {
+                saveLevelDataSync(normalizedLevel)
+                for (entry in chunkSnapshots) {
+                    writeChunkAndEntitiesInternal(
+                        entry.pos,
+                        entry.bytes,
+                        entry.chunkVer,
+                        entry.entities,
+                        entry.entityVer
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed async world snapshot save", t)
             }
         }
         trackJob(job)

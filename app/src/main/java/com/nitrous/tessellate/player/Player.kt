@@ -1,7 +1,7 @@
 package com.nitrous.tessellate.player
 
 import com.nitrous.tessellate.item.Inventory
-import com.nitrous.tessellate.world.AABB
+import com.nitrous.tessellate.math.AABB
 import com.nitrous.tessellate.world.World
 import kotlin.math.cos
 import kotlin.math.floor

@@ -13,6 +13,12 @@ import android.opengl.GLUtils
 import android.util.Log
 import com.nitrous.tessellate.core.ITexturePipeline
 import com.nitrous.tessellate.core.TextureDiagnostic
+import com.nitrous.tessellate.world.AtlasTileResolver
+import com.nitrous.tessellate.world.Chunk
+import com.nitrous.tessellate.world.ChunkMesh
+import com.nitrous.tessellate.world.ChunkMeshPrebuilder
+import com.nitrous.tessellate.world.PrebuiltChunkMesh
+import com.nitrous.tessellate.world.World
 import java.io.IOException
 
 enum class TextureFilterMode {
@@ -32,7 +38,15 @@ data class TextureUvRect(
  * Manages prototype texture loading from assets, pixel-art filtering,
  * mipmap generation, texture atlas construction, and missing texture diagnostics.
  */
-class TexturePipeline(private val context: Context) : ITexturePipeline {
+class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMeshPrebuilder, AtlasTileResolver {
+
+    override fun getTileIndex(textureId: String): Int = getAtlasTileIndex(textureId)
+
+    override fun buildPrebuiltMesh(world: World, chunk: Chunk): PrebuiltChunkMesh {
+        return ChunkMesh(chunk).apply {
+            generateMeshData(world, this@TexturePipeline)
+        }
+    }
 
     private val textureHandles = mutableMapOf<String, Int>()
     private val diagnostics = mutableMapOf<String, TextureDiagnostic>()

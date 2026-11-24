@@ -13,7 +13,7 @@ import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.item.ItemStack
 import com.nitrous.tessellate.item.RecipeRegistry
 import com.nitrous.tessellate.math.Vec3
-import com.nitrous.tessellate.registry.RegistryBootstrap
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.settings.SettingsManager
 import com.nitrous.tessellate.texture.TextureConstants
@@ -55,7 +55,7 @@ class Tdd018InventoryAndCraftingTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         cleanupFiles()
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
     }
 
     @After
@@ -115,7 +115,7 @@ class Tdd018InventoryAndCraftingTest {
             }
             """.trimIndent()
         )
-        RegistryBootstrap.initialize(context = context, forceReinitialize = true)
+        AndroidRegistryBootstrap.initialize(context = context, forceReinitialize = true)
         val modRecipe = RecipeRegistry.get("example:cobble_to_stone")
         assertNotNull("Custom recipe JSON must load during bootstrap", modRecipe)
         assertEquals("tessellate:stone", modRecipe!!.resultItemId.lowercase())

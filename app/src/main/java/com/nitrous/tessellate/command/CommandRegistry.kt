@@ -1,6 +1,8 @@
 package com.nitrous.tessellate.command
 
 import com.nitrous.tessellate.graphics.Camera3D
+import com.nitrous.tessellate.registry.CommandBootstrapDelegate
+import com.nitrous.tessellate.registry.CommandDefinitionJson
 import com.nitrous.tessellate.registry.DuplicateIdentifierException
 import com.nitrous.tessellate.registry.RegistryBootstrap
 import com.nitrous.tessellate.registry.RegistryFrozenException
@@ -18,6 +20,28 @@ object CommandRegistry {
 
     @Volatile
     private var frozen: Boolean = false
+
+    private val bootstrapDelegate = object : CommandBootstrapDelegate {
+        override fun clearForBootstrap() {
+            this@CommandRegistry.clearForBootstrap()
+        }
+
+        override fun registerDefinition(definition: CommandDefinitionJson) {
+            register(JsonCommand(definition))
+        }
+
+        override fun freeze() {
+            this@CommandRegistry.freeze()
+        }
+    }
+
+    init {
+        ensureBootstrapHook()
+    }
+
+    fun ensureBootstrapHook() {
+        RegistryBootstrap.setCommandDelegate(bootstrapDelegate)
+    }
 
     val isFrozen: Boolean
         get() = frozen

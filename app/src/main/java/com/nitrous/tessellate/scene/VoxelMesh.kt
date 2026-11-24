@@ -27,6 +27,9 @@ class VoxelMesh {
     private var vaoId: Int = 0
     private var vboId: Int = 0
     private var eboId: Int = 0
+    private var instancedVaoId: Int = 0
+    private var instanceVboId: Int = 0
+    private var instanceVboCapacityFloats: Int = 0
 
     // Stride: 3 (Pos) + 3 (Normal) + 2 (UV) = 8 floats = 32 bytes
     private val vertexStrideBytes = 8 * 4
@@ -140,6 +143,82 @@ class VoxelMesh {
         // Unbind VAO
         GLES30.glBindVertexArray(0)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+
+        initInstancedVao()
+    }
+
+    private fun initInstancedVao() {
+        val vaoArr = IntArray(1)
+        val vboArr = IntArray(1)
+        GLES30.glGenVertexArrays(1, vaoArr, 0)
+        GLES30.glGenBuffers(1, vboArr, 0)
+        instancedVaoId = vaoArr[0]
+        instanceVboId = vboArr[0]
+
+        GLES30.glBindVertexArray(instancedVaoId)
+
+        // Bind shared base cube vertices & indices (attributes 0, 1, 2)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vboId)
+        GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER, eboId)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, vertexStrideBytes, 0)
+        GLES30.glEnableVertexAttribArray(1)
+        GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, vertexStrideBytes, 3 * 4)
+        GLES30.glEnableVertexAttribArray(2)
+        GLES30.glVertexAttribPointer(2, 2, GLES30.GL_FLOAT, false, vertexStrideBytes, 6 * 4)
+
+        // Bind per-instance attribute buffer:
+        // loc 3: vec4 (cx, cy, cz, rotYawRad)
+        // loc 4: vec4 (scale, lightMul, 0, 0)
+        // loc 5: vec4 (uMin, vMin, uMax, vMax)
+        val instanceStrideBytes = FLOATS_PER_INSTANCE * 4
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, instanceVboId)
+        instanceVboCapacityFloats = 256 * FLOATS_PER_INSTANCE
+        GLES30.glBufferData(
+            GLES30.GL_ARRAY_BUFFER,
+            instanceVboCapacityFloats * 4,
+            null,
+            GLES30.GL_STREAM_DRAW
+        )
+        GLES30.glEnableVertexAttribArray(3)
+        GLES30.glVertexAttribPointer(3, 4, GLES30.GL_FLOAT, false, instanceStrideBytes, 0)
+        GLES30.glVertexAttribDivisor(3, 1)
+
+        GLES30.glEnableVertexAttribArray(4)
+        GLES30.glVertexAttribPointer(4, 4, GLES30.GL_FLOAT, false, instanceStrideBytes, 4 * 4)
+        GLES30.glVertexAttribDivisor(4, 1)
+
+        GLES30.glEnableVertexAttribArray(5)
+        GLES30.glVertexAttribPointer(5, 4, GLES30.GL_FLOAT, false, instanceStrideBytes, 8 * 4)
+        GLES30.glVertexAttribDivisor(5, 1)
+
+        GLES30.glBindVertexArray(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+    }
+
+    /**
+     * Draws [instanceCount] cubes in a single instanced OpenGL ES 3.0 draw call.
+     */
+    fun drawInstanced(instanceData: FloatBuffer, instanceCount: Int) {
+        if (instanceCount <= 0 || instancedVaoId == 0 || instanceVboId == 0) return
+        val neededFloats = instanceCount * FLOATS_PER_INSTANCE
+        val neededBytes = neededFloats * 4
+
+        GLES30.glBindVertexArray(instancedVaoId)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, instanceVboId)
+        if (neededFloats > instanceVboCapacityFloats) {
+            instanceVboCapacityFloats = maxOf(neededFloats, maxOf(256 * FLOATS_PER_INSTANCE, instanceVboCapacityFloats * 2))
+            GLES30.glBufferData(
+                GLES30.GL_ARRAY_BUFFER,
+                instanceVboCapacityFloats * 4,
+                null,
+                GLES30.GL_STREAM_DRAW
+            )
+        }
+        GLES30.glBufferSubData(GLES30.GL_ARRAY_BUFFER, 0, neededBytes, instanceData)
+        GLES30.glDrawElementsInstanced(GLES30.GL_TRIANGLES, 36, GLES30.GL_UNSIGNED_SHORT, 0, instanceCount)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        GLES30.glBindVertexArray(0)
     }
 
     /**
@@ -205,9 +284,20 @@ class VoxelMesh {
             GLES30.glDeleteVertexArrays(1, vaoArr, 0)
             vaoId = 0
         }
-        val bufArr = intArrayOf(vboId, eboId)
-        GLES30.glDeleteBuffers(2, bufArr, 0)
+        if (instancedVaoId != 0) {
+            val vaoArr = intArrayOf(instancedVaoId)
+            GLES30.glDeleteVertexArrays(1, vaoArr, 0)
+            instancedVaoId = 0
+        }
+        val bufArr = intArrayOf(vboId, eboId, instanceVboId)
+        GLES30.glDeleteBuffers(3, bufArr, 0)
         vboId = 0
         eboId = 0
+        instanceVboId = 0
+        instanceVboCapacityFloats = 0
+    }
+
+    companion object {
+        const val FLOATS_PER_INSTANCE = 12
     }
 }
