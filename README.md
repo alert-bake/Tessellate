@@ -1,9 +1,13 @@
 # Tessellate
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/dVgxpu4NGm)
-[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
+[![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=flat&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Kotlin Multiplatform](https://img.shields.io/badge/Kotlin%20Multiplatform-7F52FF?style=flat&logo=kotlin&logoColor=white)](https://kotlinlang.org/multiplatform/)
+[![Android](https://img.shields.io/badge/Android-3DDC84?style=flat&logo=android&logoColor=white)](https://developer.android.com/)
+[![Windows](https://img.shields.io/badge/Windows-0078D4?style=flat&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![Discord](https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/dVgxpu4NGm)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg?style=flat)](LICENSE)
 
-**Tessellate** is an Android-first voxel sandbox project built around a custom Kotlin engine and an OpenGL ES 3.0 renderer. It is an evolving experiment in procedural worlds, block-based building, data-driven content, and modded-sandbox foundations.
+**Tessellate** is a Kotlin Multiplatform voxel sandbox project targeting **Android and Windows**. It is built around a custom Kotlin engine and an OpenGL ES 3.0 renderer, with an evolving focus on procedural worlds, block-based building, data-driven content, and modded-sandbox foundations.
 
 > Tesselate was never real, trust frfr.
 
@@ -11,7 +15,7 @@
 
 Tessellate is in **early development**. The repository contains working engine systems and an expanding gameplay foundation, but the project is not presented as a finished game or a stable release. APIs, content formats, and internal architecture may change.
 
-The Android application is the primary game target. The separate desktop module currently acts as a JVM-side harness for exercising shared core systems; it is not a claim that a complete desktop game client is available.
+The project targets Android and Windows. The `:core` module contains shared engine systems, while the Android application and Windows desktop target provide platform-specific integration. The desktop module also serves as a JVM-side harness for exercising shared core systems.
 
 ## Current foundations
 
@@ -36,10 +40,11 @@ This list describes implemented foundations, not a promise that every system is 
 
 | Area | Implementation |
 |---|---|
-| Main language | Kotlin |
+| Language | Kotlin |
 | Android application | Android SDK, Jetpack Compose for application UI |
 | World renderer | OpenGL ES 3.0 |
-| Shared engine systems | Kotlin/JVM in `:core` |
+| Multiplatform targets | Android and Windows |
+| Shared engine systems | Kotlin in `:core` |
 | Concurrency | Kotlin coroutines and JVM concurrency primitives |
 | JSON | Moshi |
 | Lua runtime | LuaJ |
@@ -55,7 +60,7 @@ Tessellate/
 │              content assets, settings, saves, and Lua mod runtime
 ├── core/      Platform-independent world, entity, item, registry, math,
 │              geometry, lighting, and world-generation systems
-├── desktop/   JVM harness for shared-core diagnostics and experiments
+├── desktop/   Windows/JVM desktop target and shared-core diagnostics
 ├── gradle/    Gradle version catalog and build configuration
 ├── README.md
 ├── ARCHITECTURE.md
