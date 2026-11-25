@@ -258,10 +258,260 @@ For the project overview and build entry points, see [README.md](README.md).
 
 ## 15. Repository tree
 
-The following is the complete tracked-file tree from the repository at the time this document was generated. It includes source, tests, build configuration, assets, and wrapper files.
+Complete recursive tree of all 195 tracked files in this repository snapshot. Directories are marked with a trailing slash.
 
 ```text
 Tessellate/
+├── .github/
+│   └── workflows/
+│       └── release.yml
+├── app/
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── assets/
+│   │   │   │   ├── content/
+│   │   │   │   │   ├── blocks/
+│   │   │   │   │   │   ├── air.json
+│   │   │   │   │   │   ├── cobblestone.json
+│   │   │   │   │   │   ├── debugbug.json
+│   │   │   │   │   │   ├── dirt.json
+│   │   │   │   │   │   ├── glass.json
+│   │   │   │   │   │   ├── grass.json
+│   │   │   │   │   │   ├── leaves.json
+│   │   │   │   │   │   ├── oak_log.json
+│   │   │   │   │   │   ├── oak_planks.json
+│   │   │   │   │   │   ├── proto_stone.json
+│   │   │   │   │   │   ├── sand.json
+│   │   │   │   │   │   ├── stone.json
+│   │   │   │   │   │   ├── thing_that_goes_brrr.json
+│   │   │   │   │   │   └── torch.json
+│   │   │   │   │   ├── commands/
+│   │   │   │   │   │   ├── clear.json
+│   │   │   │   │   │   ├── fly.json
+│   │   │   │   │   │   ├── fpptest.json
+│   │   │   │   │   │   ├── give.json
+│   │   │   │   │   │   ├── instamine.json
+│   │   │   │   │   │   └── spawn.json
+│   │   │   │   │   ├── items/
+│   │   │   │   │   │   ├── air.json
+│   │   │   │   │   │   ├── cobblestone.json
+│   │   │   │   │   │   ├── debug_wand.json
+│   │   │   │   │   │   ├── debugbug.json
+│   │   │   │   │   │   ├── dirt.json
+│   │   │   │   │   │   ├── glass.json
+│   │   │   │   │   │   ├── grass.json
+│   │   │   │   │   │   ├── iron_pickaxe.json
+│   │   │   │   │   │   ├── leaves.json
+│   │   │   │   │   │   ├── oak_log.json
+│   │   │   │   │   │   ├── oak_planks.json
+│   │   │   │   │   │   ├── proto_stone.json
+│   │   │   │   │   │   ├── rubidium_ingot.json
+│   │   │   │   │   │   ├── sand.json
+│   │   │   │   │   │   ├── stone.json
+│   │   │   │   │   │   ├── thing_that_goes_brrr.json
+│   │   │   │   │   │   └── torch.json
+│   │   │   │   │   └── recipes/
+│   │   │   │   │       └── oak_planks.json
+│   │   │   │   ├── textures/
+│   │   │   │   │   ├── block_cobblestone.png
+│   │   │   │   │   ├── block_glass.png
+│   │   │   │   │   ├── block_sand.png
+│   │   │   │   │   ├── block_stone.png
+│   │   │   │   │   ├── block_torch.png
+│   │   │   │   │   ├── proto_base_contr.png
+│   │   │   │   │   ├── proto_contr_crouch.png
+│   │   │   │   │   ├── proto_contr_down.png
+│   │   │   │   │   ├── proto_contr_jump.png
+│   │   │   │   │   ├── proto_contr_left.png
+│   │   │   │   │   ├── proto_contr_right.png
+│   │   │   │   │   ├── proto_contr_up.png
+│   │   │   │   │   ├── proto_debugbug.png
+│   │   │   │   │   ├── proto_dirt.png
+│   │   │   │   │   ├── proto_grass_side.png
+│   │   │   │   │   ├── proto_grass.png
+│   │   │   │   │   ├── proto_stone.png
+│   │   │   │   │   ├── UI_font_ascii.png
+│   │   │   │   │   ├── UI_font.json
+│   │   │   │   │   ├── UI_gui_inventory.png
+│   │   │   │   │   └── UI_gui_widgets.png
+│   │   │   │   └── ui_layout.json
+│   │   │   ├── java/
+│   │   │   │   └── com/
+│   │   │   │       └── nitrous/
+│   │   │   │           └── tessellate/
+│   │   │   │               ├── command/
+│   │   │   │               │   ├── Command.kt
+│   │   │   │               │   ├── CommandConsole.kt
+│   │   │   │               │   └── CommandRegistry.kt
+│   │   │   │               ├── core/
+│   │   │   │               │   ├── AppState.kt
+│   │   │   │               │   ├── FrameProfiler.kt
+│   │   │   │               │   ├── Interfaces.kt
+│   │   │   │               │   └── TessellateEngine.kt
+│   │   │   │               ├── entity/
+│   │   │   │               │   └── EntityRenderer.kt
+│   │   │   │               ├── graphics/
+│   │   │   │               │   ├── Camera3D.kt
+│   │   │   │               │   ├── Frustum.kt
+│   │   │   │               │   ├── OpenGlEs3Backend.kt
+│   │   │   │               │   ├── Shader.kt
+│   │   │   │               │   └── TessellateSurfaceView.kt
+│   │   │   │               ├── input/
+│   │   │   │               │   └── TouchInputController.kt
+│   │   │   │               ├── modding/
+│   │   │   │               │   ├── LuaModRuntime.kt
+│   │   │   │               │   └── ModPermissions.kt
+│   │   │   │               ├── player/
+│   │   │   │               │   └── Player.kt
+│   │   │   │               ├── registry/
+│   │   │   │               │   └── AndroidRegistryBootstrap.kt
+│   │   │   │               ├── save/
+│   │   │   │               │   ├── WorldSaveData.kt
+│   │   │   │               │   └── WorldSaveManager.kt
+│   │   │   │               ├── scene/
+│   │   │   │               │   ├── VoxelMesh.kt
+│   │   │   │               │   ├── VoxelScene.kt
+│   │   │   │               │   └── WorldScene.kt
+│   │   │   │               ├── settings/
+│   │   │   │               │   ├── GameSettings.kt
+│   │   │   │               │   ├── SettingModels.kt
+│   │   │   │               │   ├── SettingReferenceRegistry.kt
+│   │   │   │               │   ├── SettingsManager.kt
+│   │   │   │               │   ├── SettingsRegistry.kt
+│   │   │   │               │   ├── SystemSettingsActions.kt
+│   │   │   │               │   └── VanillaSettingsRegistrar.kt
+│   │   │   │               ├── texture/
+│   │   │   │               │   ├── TextureConstants.kt
+│   │   │   │               │   └── TexturePipeline.kt
+│   │   │   │               ├── ui/
+│   │   │   │               │   ├── BitmapFontRenderer.kt
+│   │   │   │               │   ├── CreateWorldScreen.kt
+│   │   │   │               │   ├── InventoryScreen.kt
+│   │   │   │               │   ├── PauseScreen.kt
+│   │   │   │               │   ├── SettingsScreen.kt
+│   │   │   │               │   ├── TexturedUiRenderer.kt
+│   │   │   │               │   ├── UiBatchRenderer.kt
+│   │   │   │               │   ├── UiButton.kt
+│   │   │   │               │   ├── UiLayoutConfig.kt
+│   │   │   │               │   └── WorldSelectScreen.kt
+│   │   │   │               ├── world/
+│   │   │   │               │   ├── ChunkMesh.kt
+│   │   │   │               │   └── WorldRenderer.kt
+│   │   │   │               └── MainActivity.kt
+│   │   │   ├── res/
+│   │   │   │   ├── drawable/
+│   │   │   │   │   ├── ic_launcher_background.xml
+│   │   │   │   │   └── ic_launcher_foreground.xml
+│   │   │   │   ├── font/
+│   │   │   │   │   └── silkscreen.ttf
+│   │   │   │   ├── mipmap-anydpi/
+│   │   │   │   │   ├── ic_launcher_round.xml
+│   │   │   │   │   └── ic_launcher.xml
+│   │   │   │   ├── mipmap-anydpi-v26/
+│   │   │   │   │   ├── ic_launcher_round.xml
+│   │   │   │   │   └── ic_launcher.xml
+│   │   │   │   ├── values/
+│   │   │   │   │   ├── colors.xml
+│   │   │   │   │   ├── strings.xml
+│   │   │   │   │   └── themes.xml
+│   │   │   │   └── xml/
+│   │   │   │       ├── backup_rules.xml
+│   │   │   │       └── data_extraction_rules.xml
+│   │   │   └── AndroidManifest.xml
+│   │   └── test/
+│   │       └── java/
+│   │           └── com/
+│   │               └── nitrous/
+│   │                   └── tessellate/
+│   │                       ├── CoreInteractionAndControlsTest.kt
+│   │                       ├── EntityAndItemDropTest.kt
+│   │                       ├── ExampleRobolectricTest.kt
+│   │                       ├── IdentifierAndRegistryTest.kt
+│   │                       ├── ReleaseCrashRegressionTest.kt
+│   │                       ├── Tdd008PolishAndRenderingTest.kt
+│   │                       ├── Tdd009FrustumAndAsyncTest.kt
+│   │                       ├── Tdd010InventoryAndPickupTest.kt
+│   │                       ├── Tdd011_5AtlasMipmapTest.kt
+│   │                       ├── Tdd011CommandAndMigrationTest.kt
+│   │                       ├── Tdd012_7DataDrivenRegistryTest.kt
+│   │                       ├── Tdd012MainMenuAndUiTest.kt
+│   │                       ├── Tdd013AtomicLasagnaTest.kt
+│   │                       ├── Tdd014WorldCreationAndSessionTest.kt
+│   │                       ├── Tdd015SaveSystemAndPersistenceTest.kt
+│   │                       ├── Tdd016SettingsAndModdingTest.kt
+│   │                       ├── Tdd017OptimizationPassTest.kt
+│   │                       ├── Tdd018InventoryAndCraftingTest.kt
+│   │                       ├── Tdd019LazypropAndOptimizationTest.kt
+│   │                       ├── Tdd022SpinningItemsMergingAndAsyncPoolTest.kt
+│   │                       └── Tdd023FarLandsAndFilteringTest.kt
+│   ├── .gitignore
+│   ├── build.gradle.kts
+│   └── proguard-rules.pro
+├── core/
+│   ├── src/
+│   │   └── main/
+│   │       └── java/
+│   │           └── com/
+│   │               └── nitrous/
+│   │                   └── tessellate/
+│   │                       ├── entity/
+│   │                       │   ├── Entity.kt
+│   │                       │   ├── EntityRenderState.kt
+│   │                       │   ├── ItemDropEntity.kt
+│   │                       │   └── ItemDropMerger.kt
+│   │                       ├── item/
+│   │                       │   ├── Inventory.kt
+│   │                       │   ├── Item.kt
+│   │                       │   ├── ItemRegistry.kt
+│   │                       │   └── RecipeRegistry.kt
+│   │                       ├── math/
+│   │                       │   ├── AABB.kt
+│   │                       │   ├── Matrix4.kt
+│   │                       │   └── Vec3.kt
+│   │                       ├── registry/
+│   │                       │   ├── ContentAssetSource.kt
+│   │                       │   ├── ContentDefinitions.kt
+│   │                       │   ├── ContentRegistry.kt
+│   │                       │   ├── GameRegistries.kt
+│   │                       │   ├── Identifier.kt
+│   │                       │   ├── Namespaces.kt
+│   │                       │   ├── RegistryBootstrap.kt
+│   │                       │   └── RegistryExceptions.kt
+│   │                       ├── world/
+│   │                       │   ├── Block.kt
+│   │                       │   ├── BlockPos.kt
+│   │                       │   ├── BlockRegistry.kt
+│   │                       │   ├── Chunk.kt
+│   │                       │   ├── ChunkGeometryBuilder.kt
+│   │                       │   ├── LightEngine.kt
+│   │                       │   ├── NativeBufferPool.kt
+│   │                       │   ├── ParallelChunkMesher.kt
+│   │                       │   ├── World.kt
+│   │                       │   ├── WorldInterfaces.kt
+│   │                       │   └── WorldSession.kt
+│   │                       └── worldgen/
+│   │                           ├── DataDrivenWorldGenPass.kt
+│   │                           ├── PerlinNoise.kt
+│   │                           ├── Structoid.kt
+│   │                           ├── VanillaPasses.kt
+│   │                           ├── WorldGenPass.kt
+│   │                           └── WorldGenRegistry.kt
+│   └── build.gradle.kts
+├── desktop/
+│   ├── src/
+│   │   └── main/
+│   │       └── kotlin/
+│   │           └── com/
+│   │               └── nitrous/
+│   │                   └── tessellate/
+│   │                       └── desktop/
+│   │                           └── Main.kt
+│   └── build.gradle.kts
+├── gradle/
+│   ├── wrapper/
+│   │   ├── gradle-wrapper.jar
+│   │   └── gradle-wrapper.properties
+│   └── libs.versions.toml
 ├── .gitignore
 ├── ARCHITECTURE.md
 ├── build.gradle.kts
