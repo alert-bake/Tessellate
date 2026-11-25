@@ -1,3 +1,8 @@
+# Keep R8 focused on removing unreachable code. Avoid bytecode transformations
+# and name obfuscation while this build is being compatibility-tested.
+-dontoptimize
+-dontobfuscate
+
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
