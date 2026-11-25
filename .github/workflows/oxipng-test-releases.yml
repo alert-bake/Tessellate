@@ -171,14 +171,14 @@ jobs:
             echo "|:--|--:|"
             echo "| Main baseline APK | $(numfmt --to=iec-i --suffix=B "$BASELINE_SIZE") ($BASELINE_SIZE bytes) |"
             echo "| Optimized APK | $(numfmt --to=iec-i --suffix=B "$EXPERIMENTAL_SIZE") ($EXPERIMENTAL_SIZE bytes) |"
-            echo "| Size reduction | $(numfmt --to=iec-i --suffix=B "$DIFFERENCE") ($PERCENT%) |"
+            echo "| Size reduction | $(numfmt --to=iec-i --suffix=B -- "$DIFFERENCE") ($PERCENT%) |"
             echo
             if [ "$DIFFERENCE" -gt 0 ]; then
               echo "Result: optimized APK is smaller."
             elif [ "$DIFFERENCE" -eq 0 ]; then
               echo "Result: APK sizes are identical."
             else
-              echo "Result: optimized APK is larger by $(numfmt --to=iec-i --suffix=B "$((-DIFFERENCE))")."
+              echo "Result: optimized APK is larger by $(numfmt --to=iec-i --suffix=B -- "$((-DIFFERENCE))")."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
