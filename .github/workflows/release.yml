@@ -84,7 +84,7 @@ jobs:
           OXIPNG_SHA256="46e3c4beb9aae57290ad809dd3374b07153579d3322a3778c53900633618b7c6"
           OXIPNG_URL="https://github.com/oxipng/oxipng/releases/download/v${OXIPNG_VERSION}/${OXIPNG_ARCHIVE}"
           INSTALL_DIR="${RUNNER_TEMP}/oxipng-bin"
-          mkdir -p "$INSTALL_DIR"
+          mkdir -p "$INSTALL_DIR" "$RUNNER_TEMP/oxipng-extract"
 
           curl --fail --location --silent --show-error "$OXIPNG_URL" --output "$RUNNER_TEMP/$OXIPNG_ARCHIVE"
           echo "$OXIPNG_SHA256  $RUNNER_TEMP/$OXIPNG_ARCHIVE" | sha256sum --check
