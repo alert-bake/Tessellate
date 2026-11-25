@@ -8,12 +8,18 @@ permissions:
 
 jobs:
   oxipng-test-release:
-    name: Optimize textures and build test release
+    name: Compare main and optimized experimental APKs
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout experimental branch
         uses: actions/checkout@v4
+
+      - name: Checkout main for baseline comparison
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: baseline
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -38,16 +44,15 @@ jobs:
           restore-keys: |
             oxipng-v1-${{ runner.os }}-
 
-      - name: Optimize asset PNGs
-        run: python3 .github/scripts/optimize_textures.py
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Make Gradle wrappers executable
+        run: |
+          chmod +x gradlew
+          chmod +x baseline/gradlew
 
-      - name: Run unit tests
+      - name: Run experimental branch unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: Decode release keystore
@@ -60,25 +65,60 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 --decode > "${{ runner.temp }}/my-upload-key.jks"
 
-      - name: Build minified and optimized release APK
+      - name: Build unmodified main baseline APK
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./baseline/gradlew -p baseline :app:assembleRelease --stacktrace
+
+      - name: Preserve baseline APK
+        run: |
+          APK_PATH=$(find baseline/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Main baseline APK not found."
+            exit 1
+          fi
+          cp "$APK_PATH" "${{ runner.temp }}/tessellate-main-baseline.apk"
+
+      - name: Optimize experimental branch asset PNGs
+        run: python3 .github/scripts/optimize_textures.py
+
+      - name: Build minified experimental APK
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Verify APK signature and report size
+      - name: Verify signatures and compare APK sizes
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            echo "::error::Release APK not found."
+          BASELINE_APK="${{ runner.temp }}/tessellate-main-baseline.apk"
+          EXPERIMENTAL_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$EXPERIMENTAL_APK" ]; then
+            echo "::error::Experimental APK not found."
             exit 1
           fi
-          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK_PATH"
-          stat -c 'Test release APK: %n (%s bytes)' "$APK_PATH"
 
-      - name: Upload Oxipng test release
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$BASELINE_APK"
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$EXPERIMENTAL_APK"
+
+          BASELINE_SIZE=$(stat -c %s "$BASELINE_APK")
+          EXPERIMENTAL_SIZE=$(stat -c %s "$EXPERIMENTAL_APK")
+          echo "Main baseline APK: $BASELINE_SIZE bytes"
+          echo "Experimental APK: $EXPERIMENTAL_SIZE bytes"
+          python3 -c 'import sys; a,b=map(int,sys.argv[1:]); d=a-b; print(f"Difference: {d:+,} bytes ({d/a*100:+.2f}%)")' "$BASELINE_SIZE" "$EXPERIMENTAL_SIZE"
+
+      - name: Upload main baseline APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: tessellate-main-baseline
+          path: ${{ runner.temp }}/tessellate-main-baseline.apk
+          archive: false
+          retention-days: 14
+
+      - name: Upload optimized experimental APK
         uses: actions/upload-artifact@v7
         with:
           name: tessellate-oxipng-test-release
