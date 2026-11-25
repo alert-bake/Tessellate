@@ -35,10 +35,11 @@ googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
 luajJse = "3.0.1"
+activity = "1.10.1"
 
 
 [libraries]
-androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activityCompose" }
+androidx-activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
