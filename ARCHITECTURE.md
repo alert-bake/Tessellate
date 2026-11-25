@@ -255,3 +255,21 @@ When changing Tessellate, keep these boundaries intact unless there is a deliber
 ---
 
 For the project overview and build entry points, see [README.md](README.md).
+
+## 15. Repository tree
+
+The following is the complete tracked-file tree from the repository at the time this document was generated. It includes source, tests, build configuration, assets, and wrapper files.
+
+```text
+Tessellate/
+├── .gitignore
+├── ARCHITECTURE.md
+├── build.gradle.kts
+├── gradle.properties
+├── gradlew
+├── gradlew.bat
+├── LICENSE
+├── metadata.json
+├── README.md
+└── settings.gradle.kts
+```
