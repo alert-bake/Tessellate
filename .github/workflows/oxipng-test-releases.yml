@@ -171,7 +171,7 @@ jobs:
             echo "|:--|--:|"
             echo "| Main baseline APK | $(numfmt --to=iec-i --suffix=B "$BASELINE_SIZE") ($BASELINE_SIZE bytes) |"
             echo "| Optimized APK | $(numfmt --to=iec-i --suffix=B "$EXPERIMENTAL_SIZE") ($EXPERIMENTAL_SIZE bytes) |"
-            echo "| Size reduction | $(numfmt --to=iec-i --suffix=B -- "$DIFFERENCE") ($PERCENT%) |"
+            echo "| Size difference (baseline − optimized) | $(numfmt --to=iec-i --suffix=B -- "$DIFFERENCE") ($PERCENT%) |"
             echo
             if [ "$DIFFERENCE" -gt 0 ]; then
               echo "Result: optimized APK is smaller."
