@@ -1,0 +1,20 @@
+name: Ultra-Optimized Release (Experimental Branch Required)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-warning:
+    name: Redirect to optimization-experiments
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain where to run the real workflow
+        shell: bash
+        run: |
+          MESSAGE="Your supposed to use the experimental branch with this workflow, go do it."
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::$MESSAGE"
+          exit 1
