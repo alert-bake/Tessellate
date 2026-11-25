@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-release:
-    name: Build & Sign Unoptimized Release APK
+    name: Build & Sign Unoptimized Release APK (R8 Disabled)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -46,13 +46,13 @@ jobs:
           KEYSTORE_PATH: ${{ runner.temp }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --stacktrace
+        run: ./gradlew :app:assembleUnoptimizedRelease --stacktrace
 
       - name: Verify APK Signature
         shell: bash
         run: |
           set -euo pipefail
-          APK_PATH=$(find app/build/outputs/apk/release -type f -name "*.apk" -print -quit)
+          APK_PATH=$(find app/build/outputs/apk/unoptimizedRelease -type f -name "*.apk" -print -quit)
           if [ -z "$APK_PATH" ]; then
             echo "::error::Release APK not found in build outputs!"
             exit 1
@@ -64,7 +64,7 @@ jobs:
       - name: Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v7
         with:
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/unoptimizedRelease/*.apk
           archive: false
           retention-days: 14
 
