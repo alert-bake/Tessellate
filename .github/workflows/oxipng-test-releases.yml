@@ -28,7 +28,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install pinned oxipng
-        run: cargo install oxipng --version 9.1.5 --locked
+        run: cargo install oxipng --version 10.2.1 --locked
 
       - name: Restore optimized PNG cache
         uses: actions/cache@v4
