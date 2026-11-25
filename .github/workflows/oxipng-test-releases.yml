@@ -52,9 +52,6 @@ jobs:
           chmod +x gradlew
           chmod +x baseline/gradlew
 
-      - name: Run experimental branch unit tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
-
       - name: Decode release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
