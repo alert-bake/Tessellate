@@ -20,14 +20,26 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Oxipng binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          OXIPNG_VERSION="10.2.1"
+          OXIPNG_ARCHIVE="oxipng-${OXIPNG_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          OXIPNG_SHA256="46e3c4beb9aae57290ad809dd3374b07153579d3322a3778c53900633618b7c6"
+          OXIPNG_URL="https://github.com/oxipng/oxipng/releases/download/v${OXIPNG_VERSION}/${OXIPNG_ARCHIVE}"
+          INSTALL_DIR="${RUNNER_TEMP}/oxipng-bin"
+          mkdir -p "$INSTALL_DIR"
 
-      - name: Cache Rust build data
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install pinned Oxipng
-        run: cargo install oxipng --version 10.2.1 --locked
+          curl --fail --location --silent --show-error "$OXIPNG_URL" --output "$RUNNER_TEMP/$OXIPNG_ARCHIVE"
+          echo "$OXIPNG_SHA256  $RUNNER_TEMP/$OXIPNG_ARCHIVE" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/oxipng-extract"
+          tar -xzf "$RUNNER_TEMP/$OXIPNG_ARCHIVE" -C "$RUNNER_TEMP/oxipng-extract"
+          OXIPNG_SOURCE="$(find "$RUNNER_TEMP/oxipng-extract" -type f -name oxipng -print -quit)"
+          test -n "$OXIPNG_SOURCE"
+          install -m 0755 "$OXIPNG_SOURCE" "$INSTALL_DIR/oxipng"
+          echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+          oxipng --version
 
       - name: Restore ultra Oxipng cache
         uses: actions/cache@v4
