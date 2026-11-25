@@ -105,7 +105,7 @@ jobs:
         if: always() && steps.optimize.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_CACHE_KEY: oxipng-v2-${{ runner.os }}-${{ hashFiles('.github/scripts/optimize_textures.py', 'app/src/main/assets/**/*.png') }}
+          CURRENT_CACHE_KEY: ${{ steps.oxipng-cache.outputs.cache-primary-key }}
         shell: bash
         run: |
           set -euo pipefail
