@@ -23,24 +23,24 @@ class ChunkMesh(
 ) : PrebuiltChunkMesh {
     /** World-space bounding box of this 16x16x16 chunk for frustum culling. */
     val worldBounds: AABB = AABB(
-        minX = (chunk.chunkX * Chunk.SIZE).toFloat(),
-        minY = (chunk.chunkY * Chunk.SIZE).toFloat(),
-        minZ = (chunk.chunkZ * Chunk.SIZE).toFloat(),
-        maxX = ((chunk.chunkX + 1) * Chunk.SIZE).toFloat(),
-        maxY = ((chunk.chunkY + 1) * Chunk.SIZE).toFloat(),
-        maxZ = ((chunk.chunkZ + 1) * Chunk.SIZE).toFloat()
+        minX = (chunk.chunkX * Chunk.SIZE).toDouble(),
+        minY = (chunk.chunkY * Chunk.SIZE).toDouble(),
+        minZ = (chunk.chunkZ * Chunk.SIZE).toDouble(),
+        maxX = ((chunk.chunkX + 1) * Chunk.SIZE).toDouble(),
+        maxY = ((chunk.chunkY + 1) * Chunk.SIZE).toDouble(),
+        maxZ = ((chunk.chunkZ + 1) * Chunk.SIZE).toDouble()
     )
 
-    val originX: Float get() = worldBounds.minX
-    val originY: Float get() = worldBounds.minY
-    val originZ: Float get() = worldBounds.minZ
+    val originX: Double get() = worldBounds.minX
+    val originY: Double get() = worldBounds.minY
+    val originZ: Double get() = worldBounds.minZ
 
-    val centerX: Float get() = worldBounds.minX + 8f
-    val centerY: Float get() = worldBounds.minY + 8f
-    val centerZ: Float get() = worldBounds.minZ + 8f
+    val centerX: Double get() = worldBounds.minX + 8.0
+    val centerY: Double get() = worldBounds.minY + 8.0
+    val centerZ: Double get() = worldBounds.minZ + 8.0
 
     @JvmField
-    var sortDistSq: Float = 0f
+    var sortDistSq: Double = 0.0
 
     // Pass 1: Opaque GPU handles
     var opaqueVaoId: Int = 0

@@ -76,13 +76,13 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
                 world.setBlock(x, 4, z, BlockType.STONE)
             }
         }
-        val drop = ItemDropEntity(Vec3(8.5f, 5.0f, 8.5f), itemId = "tessellate:stone")
+        val drop = ItemDropEntity(Vec3(8.5, 5.0, 8.5), itemId = "tessellate:stone")
         world.spawnEntity(drop)
 
         val initialYaw = drop.rotationYawDegrees
         val bobSamples = mutableListOf<Float>()
         repeat(30) {
-            world.tickEntities(1f / 30f, 8.5f, 8.5f)
+            world.tickEntities(1f / 30f, 8.5, 8.5)
             bobSamples.add(drop.bobOffsetY)
         }
 
@@ -96,7 +96,7 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
         assertTrue("Sine wave bobbing must oscillate smoothly (${maxBob - minBob})", (maxBob - minBob) > 0.03f)
 
         // Stack count persists cleanly through EntityPersistenceRegistry
-        val bigDrop = ItemDropEntity(Vec3(8.5f, 5.0f, 8.5f), itemId = "tessellate:stone", count = 192)
+        val bigDrop = ItemDropEntity(Vec3(8.5, 5.0, 8.5), itemId = "tessellate:stone", count = 192)
         val saved = EntityPersistenceRegistry.serialize(bigDrop)
         val restored = EntityPersistenceRegistry.deserialize(saved) as? ItemDropEntity
         assertNotNull(restored)
@@ -109,20 +109,20 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
         val scene = engine.worldScene
         try {
             scene.world.clearEntities()
-            scene.player.posX = 50f
-            scene.player.posZ = 50f
+            scene.player.posX = 50.0
+            scene.player.posZ = 50.0
 
             // Spawn 5 identical stone drops within 1.5 blocks of (8.5, 8.0, 8.5)
             val nearbyDrops = listOf(
-                ItemDropEntity(Vec3(8.2f, 8.0f, 8.5f), "tessellate:stone"),
-                ItemDropEntity(Vec3(8.5f, 8.0f, 8.5f), "tessellate:stone"),
-                ItemDropEntity(Vec3(8.8f, 8.0f, 8.6f), "tessellate:stone"),
-                ItemDropEntity(Vec3(9.1f, 8.0f, 8.5f), "tessellate:stone"),
-                ItemDropEntity(Vec3(9.3f, 8.0f, 8.7f), "tessellate:stone")
+                ItemDropEntity(Vec3(8.2, 8.0, 8.5), "tessellate:stone"),
+                ItemDropEntity(Vec3(8.5, 8.0, 8.5), "tessellate:stone"),
+                ItemDropEntity(Vec3(8.8, 8.0, 8.6), "tessellate:stone"),
+                ItemDropEntity(Vec3(9.1, 8.0, 8.5), "tessellate:stone"),
+                ItemDropEntity(Vec3(9.3, 8.0, 8.7), "tessellate:stone")
             )
             // 1 different item type nearby + 1 identical item further than 1.5 blocks
-            val dirtNearby = ItemDropEntity(Vec3(8.5f, 8.0f, 8.5f), "tessellate:dirt")
-            val farStone = ItemDropEntity(Vec3(12.0f, 8.0f, 8.5f), "tessellate:stone")
+            val dirtNearby = ItemDropEntity(Vec3(8.5, 8.0, 8.5), "tessellate:dirt")
+            val farStone = ItemDropEntity(Vec3(12.0, 8.0, 8.5), "tessellate:stone")
 
             (nearbyDrops + dirtNearby + farStone).forEach { scene.world.spawnEntity(it) }
 
@@ -133,7 +133,7 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
             val survivingDrops = scene.world.entities.filterIsInstance<ItemDropEntity>().filter { !it.isRemoved }
             assertEquals("5 identical nearby + 1 dirt + 1 far stone = 3 surviving entities", 3, survivingDrops.size)
 
-            val mergedStone = survivingDrops.first { it.itemId.equals("tessellate:stone", true) && it.position.x < 10f }
+            val mergedStone = survivingDrops.first { it.itemId.equals("tessellate:stone", true) && it.position.x < 10.0 }
             assertEquals(5, mergedStone.count)
             assertTrue(survivingDrops.any { it === dirtNearby && it.count == 1 })
             assertTrue(survivingDrops.any { it === farStone && it.count == 1 })
@@ -148,13 +148,13 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
         val scene = engine.worldScene
         try {
             scene.world.clearEntities()
-            scene.player.posX = 50f
-            scene.player.posZ = 50f
+            scene.player.posX = 50.0
+            scene.player.posZ = 50.0
 
-            // Place 12 non-matching alternating or tightly packed drops within dx <= 1.5f
+            // Place 12 non-matching alternating or tightly packed drops within dx <= 1.5
             for (i in 0 until 12) {
                 val id = if (i % 2 == 0) "tessellate:stone" else "tessellate:dirt"
-                scene.world.spawnEntity(ItemDropEntity(Vec3(8.0f + i * 0.05f, 8.0f, 8.5f), id))
+                scene.world.spawnEntity(ItemDropEntity(Vec3(8.0 + i * 0.05, 8.0, 8.5), id))
             }
             scene.mergeNearbyItemDrops()
             // Each of the <= 12 entities may check at most 5 nearby candidates -> total <= 12 * 5
@@ -165,11 +165,11 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
 
             // Unlimited simulation stack (192 items in 1 entity) fills multiple inventory slots on pickup
             scene.world.clearEntities()
-            val megaDrop = ItemDropEntity(Vec3(8.5f, 6.0f, 8.5f), "tessellate:stone", count = 192)
+            val megaDrop = ItemDropEntity(Vec3(8.5, 6.0, 8.5), "tessellate:stone", count = 192)
             scene.world.spawnEntity(megaDrop)
-            scene.player.posX = 8.5f
-            scene.player.posY = 6.0f
-            scene.player.posZ = 8.5f
+            scene.player.posX = 8.5
+            scene.player.posY = 6.0
+            scene.player.posZ = 8.5
             scene.checkItemPickups()
 
             assertTrue(megaDrop.isRemoved)
@@ -189,7 +189,7 @@ class Tdd022SpinningItemsMergingAndAsyncPoolTest {
         pipeline.createAtlasBitmap().recycle()
 
         val world = World(chunksX = 1, chunksY = 1, chunksZ = 1)
-        val megaDrop = ItemDropEntity(Vec3(8.5f, 8.0f, 8.5f), itemId = "tessellate:stone", count = 192)
+        val megaDrop = ItemDropEntity(Vec3(8.5, 8.0, 8.5), itemId = "tessellate:stone", count = 192)
         megaDrop.tick(world, 0.5f) // Advance rotation & sine bobbing
 
         assertEquals(64, EntityRenderer.computeRenderLayerCount(192))

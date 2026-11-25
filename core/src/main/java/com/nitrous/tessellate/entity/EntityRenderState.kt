@@ -9,9 +9,9 @@ import kotlin.math.sin
  * to OpenGL or Android APIs.
  */
 interface EntityRenderState {
-    val centerX: Float
-    val centerY: Float
-    val centerZ: Float
+    val centerX: Double
+    val centerY: Double
+    val centerZ: Double
     val scale: Float
     val yawRadians: Float
     val bobOffsetY: Float
@@ -24,9 +24,9 @@ interface EntityRenderState {
  * visual stack layers.
  */
 data class ItemDropRenderState(
-    override var centerX: Float = 0f,
-    override var centerY: Float = 0f,
-    override var centerZ: Float = 0f,
+    override var centerX: Double = 0.0,
+    override var centerY: Double = 0.0,
+    override var centerZ: Double = 0.0,
     override var scale: Float = ItemDropEntity.WIDTH,
     override var yawRadians: Float = 0f,
     override var bobOffsetY: Float = ItemDropEntity.FLOAT_BASE_OFFSET_Y,
@@ -40,9 +40,26 @@ data class ItemDropRenderState(
      * in `0 until renderLayerCount` without allocating objects.
      */
     fun writeLayerTransform(layerIndex: Int, outPosRot: FloatArray, outOffset: Int = 0) {
-        var ox = centerX
-        var oy = centerY + bobOffsetY
-        var oz = centerZ
+        writeRelativeLayerTransform(layerIndex, 0.0, 0.0, 0.0, outPosRot, outOffset)
+    }
+
+    /**
+     * Computes camera-relative GPU position `((worldPos - cameraPos).toFloat())` and Y-axis rotation
+     * `out[3]` for [layerIndex] in `0 until renderLayerCount` without allocating objects.
+     * Subtracting camera coordinates in 64-bit Double before casting to 32-bit Float prevents
+     * Far Lands jitter/quantization at extreme world coordinates.
+     */
+    fun writeRelativeLayerTransform(
+        layerIndex: Int,
+        cameraX: Double,
+        cameraY: Double,
+        cameraZ: Double,
+        outPosRot: FloatArray,
+        outOffset: Int = 0
+    ) {
+        var ox = (centerX - cameraX).toFloat()
+        var oy = (centerY - cameraY).toFloat() + bobOffsetY
+        var oz = (centerZ - cameraZ).toFloat()
         var yaw = yawRadians
 
         if (layerIndex > 0) {

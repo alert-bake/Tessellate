@@ -117,8 +117,12 @@ class VoxelScene : IGameScene {
         val mesh = voxelMesh ?: return
         val pipeline = runtime.texturePipeline
         val camera = runtime.camera
-        if (camera is com.nitrous.tessellate.graphics.Camera3D) {
-            camera.copyViewProjectionMatrix(viewProjScratch)
+        val cam = camera as? com.nitrous.tessellate.graphics.Camera3D
+        val camX = cam?.eyeX ?: 0.0
+        val camY = cam?.eyeY ?: 0.0
+        val camZ = cam?.eyeZ ?: 0.0
+        if (cam != null) {
+            cam.copyViewProjectionMatrix(viewProjScratch)
         } else {
             System.arraycopy(camera.viewProjectionMatrix, 0, viewProjScratch, 0, 16)
         }
@@ -135,7 +139,7 @@ class VoxelScene : IGameScene {
             SceneRenderMode.NATURAL_VOXEL_BLOCK -> {
                 drawCubeAt(
                     mesh, shader, viewProjScratch,
-                    x = 0f, y = 0f, z = 0f,
+                    x = (0.0 - camX).toFloat(), y = (0.0 - camY).toFloat(), z = (0.0 - camZ).toFloat(),
                     rotY = autoRotateAngle,
                     topTexture = TextureConstants.PROTO_GRASS,
                     sideTexture = TextureConstants.PROTO_GRASS_SIDE,
@@ -146,7 +150,7 @@ class VoxelScene : IGameScene {
             SceneRenderMode.INSPECT_SINGLE_TEXTURE -> {
                 drawUniformCubeAt(
                     mesh, shader, viewProjScratch,
-                    x = 0f, y = 0f, z = 0f,
+                    x = (0.0 - camX).toFloat(), y = (0.0 - camY).toFloat(), z = (0.0 - camZ).toFloat(),
                     rotY = autoRotateAngle,
                     textureId = activeInspectedTextureId,
                     pipeline = pipeline
@@ -154,11 +158,11 @@ class VoxelScene : IGameScene {
             }
             SceneRenderMode.VOXEL_COLUMN -> {
                 // Stack of 3 blocks: Grass on top, Dirt in center, Stone on bottom
-                val baseY = -0.5f
+                val baseY = -0.5
                 // Top: Grass block
                 drawCubeAt(
                     mesh, shader, viewProjScratch,
-                    x = 0f, y = baseY + 1.05f, z = 0f,
+                    x = (0.0 - camX).toFloat(), y = (baseY + 1.05 - camY).toFloat(), z = (0.0 - camZ).toFloat(),
                     rotY = autoRotateAngle,
                     topTexture = TextureConstants.PROTO_GRASS,
                     sideTexture = TextureConstants.PROTO_GRASS_SIDE,
@@ -168,7 +172,7 @@ class VoxelScene : IGameScene {
                 // Middle: Dirt block
                 drawUniformCubeAt(
                     mesh, shader, viewProjScratch,
-                    x = 0f, y = baseY, z = 0f,
+                    x = (0.0 - camX).toFloat(), y = (baseY - camY).toFloat(), z = (0.0 - camZ).toFloat(),
                     rotY = autoRotateAngle,
                     textureId = TextureConstants.PROTO_DIRT,
                     pipeline = pipeline
@@ -176,7 +180,7 @@ class VoxelScene : IGameScene {
                 // Bottom: Stone block
                 drawUniformCubeAt(
                     mesh, shader, viewProjScratch,
-                    x = 0f, y = baseY - 1.05f, z = 0f,
+                    x = (0.0 - camX).toFloat(), y = (baseY - 1.05 - camY).toFloat(), z = (0.0 - camZ).toFloat(),
                     rotY = autoRotateAngle,
                     textureId = TextureConstants.PROTO_STONE,
                     pipeline = pipeline
@@ -185,15 +189,15 @@ class VoxelScene : IGameScene {
             SceneRenderMode.SHOWCASE_ALL -> {
                 // Showcase all 5 prototype textures side-by-side in a circular layout
                 val ids = TextureConstants.ALL_PROTOTYPE_IDS
-                val radius = 1.6f
+                val radius = 1.6
                 val count = ids.size
                 for (i in 0 until count) {
-                    val angleRad = (i.toFloat() / count * 2.0 * Math.PI) + Math.toRadians(autoRotateAngle.toDouble())
-                    val cx = (radius * Math.cos(angleRad)).toFloat()
-                    val cz = (radius * Math.sin(angleRad)).toFloat()
+                    val angleRad = (i.toDouble() / count * 2.0 * Math.PI) + Math.toRadians(autoRotateAngle.toDouble())
+                    val cx = radius * Math.cos(angleRad)
+                    val cz = radius * Math.sin(angleRad)
                     drawUniformCubeAt(
                         mesh, shader, viewProjScratch,
-                        x = cx, y = 0f, z = cz,
+                        x = (cx - camX).toFloat(), y = (0.0 - camY).toFloat(), z = (cz - camZ).toFloat(),
                         rotY = -Math.toDegrees(angleRad).toFloat(),
                         textureId = ids[i],
                         scale = 0.7f,

@@ -64,6 +64,36 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
             filterModeDirty = true
         }
 
+    @Volatile
+    var mipmappingEnabled: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                filterModeDirty = true
+            }
+        }
+
+    @Volatile
+    var anisotropicFilteringEnabled: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                filterModeDirty = true
+            }
+        }
+
+    @Volatile
+    var isAnisotropicSupported: Boolean = false
+        private set
+
+    @Volatile
+    var maxHardwareAnisotropy: Float = 1.0f
+        private set
+
+    @Volatile
+    var appliedAtlasAnisotropy: Float = 1.0f
+        private set
+
     private var proceduralDebugHandle: Int = 0
     var atlasTextureHandle: Int = 0
         private set
@@ -76,9 +106,46 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
      */
     fun initGl() {
         isGlInitialized = true
+        probeAnisotropyCapability()
         createProceduralFallback()
         reloadAll()
         buildAtlas()
+    }
+
+    internal fun probeAnisotropyCapability() {
+        val extensions = try {
+            GLES30.glGetString(GLES30.GL_EXTENSIONS)
+        } catch (_: Throwable) {
+            null
+        }
+        val supported = extensions?.contains(EXT_TEXTURE_FILTER_ANISOTROPIC, ignoreCase = true) == true
+        isAnisotropicSupported = supported
+        if (supported) {
+            val maxBuf = FloatArray(1)
+            GLES30.glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, maxBuf, 0)
+            val hwMax = maxBuf[0]
+            maxHardwareAnisotropy = if (hwMax.isFinite() && hwMax >= 1.0f) hwMax else TARGET_ANISOTROPY
+        } else {
+            maxHardwareAnisotropy = 1.0f
+        }
+        appliedAtlasAnisotropy = computeEffectiveAnisotropy()
+    }
+
+    fun computeEffectiveAtlasMinFilter(mode: TextureFilterMode = filterMode): Int {
+        return if (mipmappingEnabled) {
+            ATLAS_MIN_FILTER
+        } else {
+            when (mode) {
+                TextureFilterMode.NEAREST -> GLES30.GL_NEAREST
+                TextureFilterMode.LINEAR -> GLES30.GL_LINEAR
+            }
+        }
+    }
+
+    fun computeEffectiveAnisotropy(maxSupported: Float = maxHardwareAnisotropy): Float {
+        if (!anisotropicFilteringEnabled || !isAnisotropicSupported) return 1.0f
+        if (!maxSupported.isFinite() || maxSupported < 1.0f) return 1.0f
+        return minOf(TARGET_ANISOTROPY, maxSupported).coerceAtLeast(1.0f)
     }
 
     private fun createProceduralFallback() {
@@ -546,23 +613,32 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
     }
 
     private fun applyAtlasFilterParameters(mode: TextureFilterMode) {
-        // Always use trilinear mipmapping on the padded block atlas to eliminate distant shimmer
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, ATLAS_MIN_FILTER)
+        // Use trilinear mipmapping (GL_LINEAR_MIPMAP_LINEAR) when enabled to eliminate distant shimmer
+        val minFilter = computeEffectiveAtlasMinFilter(mode)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, minFilter)
         val magFilter = when (mode) {
             TextureFilterMode.NEAREST -> GLES30.GL_NEAREST
             TextureFilterMode.LINEAR -> GLES30.GL_LINEAR
         }
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, magFilter)
+
+        val effectiveAniso = computeEffectiveAnisotropy(maxHardwareAnisotropy)
+        appliedAtlasAnisotropy = effectiveAniso
+        if (isAnisotropicSupported) {
+            GLES30.glTexParameterf(GLES30.GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, effectiveAniso)
+        }
     }
 
     private fun applyFilterParameters(mode: TextureFilterMode) {
         when (mode) {
             TextureFilterMode.NEAREST -> {
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST_MIPMAP_NEAREST)
+                val minFilter = if (mipmappingEnabled) GLES30.GL_NEAREST_MIPMAP_NEAREST else GLES30.GL_NEAREST
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, minFilter)
                 GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST)
             }
             TextureFilterMode.LINEAR -> {
-                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
+                val minFilter = if (mipmappingEnabled) GLES30.GL_LINEAR_MIPMAP_LINEAR else GLES30.GL_LINEAR
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, minFilter)
                 GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
             }
         }
@@ -628,6 +704,11 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
         const val ATLAS_MAX_MIP_LEVEL = 3
         const val ATLAS_MIN_FILTER = GLES30.GL_LINEAR_MIPMAP_LINEAR
         const val ATLAS_WRAP_MODE = GLES30.GL_CLAMP_TO_EDGE
+
+        const val EXT_TEXTURE_FILTER_ANISOTROPIC = "GL_EXT_texture_filter_anisotropic"
+        const val GL_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE
+        const val GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF
+        const val TARGET_ANISOTROPY = 8.0f
 
         const val MAX_ATLAS_TILES = 32
 

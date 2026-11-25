@@ -8,14 +8,14 @@ import com.nitrous.tessellate.world.ParallelChunkMesher
 import com.nitrous.tessellate.world.World
 
 fun main() {
-    val testVec = Vec3(1f, 2f, 3f)
-    check(testVec.length() > 0f)
+    val testVec = Vec3(1.0, 2.0, 3.0)
+    check(testVec.length() > 0.0)
 
     // Verify platform-independent TDD-022.1 systems load & execute on Desktop JVM
     val world = World(chunksX = 1, chunksY = 1, chunksZ = 1)
     world.setBlock(8, 4, 8, BlockType.STONE)
-    val dropA = ItemDropEntity(Vec3(8.5f, 6.0f, 8.5f))
-    val dropB = ItemDropEntity(Vec3(8.8f, 6.0f, 8.5f))
+    val dropA = ItemDropEntity(Vec3(8.5, 6.0, 8.5))
+    val dropB = ItemDropEntity(Vec3(8.8, 6.0, 8.5))
     world.spawnEntity(dropA)
     world.spawnEntity(dropB)
     world.tickEntities(0.05f)

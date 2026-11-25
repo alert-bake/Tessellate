@@ -27,9 +27,9 @@ data class WorldSaveData(
     val seed: Long,
     val gamemode: GameMode,
     val worldType: WorldType,
-    val playerX: Float,
-    val playerY: Float,
-    val playerZ: Float,
+    val playerX: Double,
+    val playerY: Double,
+    val playerZ: Double,
     val playerYaw: Float,
     val playerPitch: Float,
     val selectedSlot: Int = 0,
@@ -50,12 +50,12 @@ data class WorldSaveData(
  */
 data class SavedEntityData(
     val typeId: String,
-    val x: Float,
-    val y: Float,
-    val z: Float,
-    val vx: Float = 0f,
-    val vy: Float = 0f,
-    val vz: Float = 0f,
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val vx: Double = 0.0,
+    val vy: Double = 0.0,
+    val vz: Double = 0.0,
     val extraData: Map<String, Any?> = emptyMap()
 )
 

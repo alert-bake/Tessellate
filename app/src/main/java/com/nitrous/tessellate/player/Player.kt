@@ -13,9 +13,9 @@ import kotlin.math.sqrt
  * gravity, ground detection, and axis-separated AABB voxel collision.
  */
 class Player(
-    var posX: Float = 24.5f,
-    var posY: Float = 20.0f,
-    var posZ: Float = 24.5f
+    var posX: Double = 24.5,
+    var posY: Double = 20.0,
+    var posZ: Double = 24.5
 ) {
     /** 36-slot player inventory (0..8 hotbar, 9..35 main inventory). */
     val inventory = Inventory(size = Inventory.TOTAL_SIZE)
@@ -31,26 +31,26 @@ class Player(
 
     // Velocity (blocks per second)
     @Volatile
-    var velX: Float = 0f
+    var velX: Double = 0.0
     @Volatile
-    var velY: Float = 0f
+    var velY: Double = 0.0
     @Volatile
-    var velZ: Float = 0f
+    var velZ: Double = 0.0
 
     // Physical dimensions
-    val radius: Float = 0.3f // 0.6 block width and depth
-    val standingHeight: Float = 1.8f
-    val crouchHeight: Float = 1.3f
-    val standingEyeHeight: Float = 1.62f
-    val crouchEyeHeight: Float = 1.15f
+    val radius: Double = 0.3 // 0.6 block width and depth
+    val standingHeight: Double = 1.8
+    val crouchHeight: Double = 1.3
+    val standingEyeHeight: Double = 1.62
+    val crouchEyeHeight: Double = 1.15
 
     // Movement speeds & physics constants
-    val walkSpeed: Float = 4.3f       // blocks/second
-    val flySpeed: Float = 8.5f        // blocks/second
-    val crouchSpeed: Float = 2.2f     // blocks/second
-    val jumpSpeed: Float = 8.2f       // blocks/second
-    val gravity: Float = -24.0f       // blocks/second^2
-    val terminalVelocity: Float = -35.0f
+    val walkSpeed: Double = 4.3       // blocks/second
+    val flySpeed: Double = 8.5        // blocks/second
+    val crouchSpeed: Double = 2.2     // blocks/second
+    val jumpSpeed: Double = 8.2       // blocks/second
+    val gravity: Double = -24.0       // blocks/second^2
+    val terminalVelocity: Double = -35.0
 
     // Player States
     @Volatile
@@ -68,13 +68,13 @@ class Player(
     @Volatile
     var autoJump: Boolean = false
 
-    val currentHeight: Float
+    val currentHeight: Double
         get() = if (isCrouching) crouchHeight else standingHeight
 
-    val currentEyeHeight: Float
+    val currentEyeHeight: Double
         get() = if (isCrouching) crouchEyeHeight else standingEyeHeight
 
-    val eyeY: Float
+    val eyeY: Double
         get() = posY + currentEyeHeight
 
     // Reusable bounding box
@@ -84,12 +84,12 @@ class Player(
     )
 
     // Pre-allocated mutable scratch AABBs to ensure zero allocations during tick/update loops
-    private val scratchFeetStepBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
-    private val scratchClearanceBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
-    private val scratchStandingTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
-    private val scratchMoveTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
-    private val scratchBlockBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
-    private val scratchGroundTestBox = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val scratchFeetStepBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val scratchClearanceBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val scratchStandingTestBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val scratchMoveTestBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val scratchBlockBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    private val scratchGroundTestBox = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     fun updateBoundingBox() {
         boundingBox.set(
@@ -103,7 +103,7 @@ class Player(
      */
     fun jump(): Boolean {
         if (isFlying) {
-            velY = flySpeed * 0.75f
+            velY = flySpeed * 0.75
             return true
         }
         if (!isGrounded) return false
@@ -123,7 +123,7 @@ class Player(
         crouchInput: Boolean,
         jumpInput: Boolean = false
     ) {
-        val dt = deltaTime.coerceIn(0.001f, 0.05f)
+        val dt = deltaTime.coerceIn(0.001f, 0.05f).toDouble()
 
         // 1. Process Crouching state with ceiling clearance check (crouch button doubles as descend while flying)
         if (!isFlying) {
@@ -135,10 +135,10 @@ class Player(
         }
 
         // 2. Compute Directional Movement & Normalize Diagonals
-        var inputX = moveStrafe
-        var inputZ = moveForward
+        var inputX = moveStrafe.toDouble()
+        var inputZ = moveForward.toDouble()
         val inputMagnitude = sqrt(inputX * inputX + inputZ * inputZ)
-        if (inputMagnitude > 1.0f) {
+        if (inputMagnitude > 1.0) {
             inputX /= inputMagnitude
             inputZ /= inputMagnitude
         }
@@ -147,10 +147,10 @@ class Player(
         // In our coordinate system:
         // Forward vector on XZ plane: (sin(yaw), -cos(yaw))
         // Right strafe vector on XZ plane: (cos(yaw), sin(yaw))
-        val forwardDirX = sin(yawRad).toFloat()
-        val forwardDirZ = -cos(yawRad).toFloat()
-        val rightDirX = cos(yawRad).toFloat()
-        val rightDirZ = sin(yawRad).toFloat()
+        val forwardDirX = sin(yawRad)
+        val forwardDirZ = -cos(yawRad)
+        val rightDirX = cos(yawRad)
+        val rightDirZ = sin(yawRad)
 
         val activeSpeed = when {
             isFlying -> flySpeed
@@ -164,12 +164,12 @@ class Player(
         checkGroundSupport(world)
         if (isFlying) {
             velY = when {
-                jumpInput && !crouchInput -> flySpeed * 0.75f
-                crouchInput && !jumpInput -> -flySpeed * 0.75f
-                else -> 0f
+                jumpInput && !crouchInput -> flySpeed * 0.75
+                crouchInput && !jumpInput -> -flySpeed * 0.75
+                else -> 0.0
             }
         } else {
-            if (autoJump && isGrounded && inputMagnitude > 0.1f) {
+            if (autoJump && isGrounded && inputMagnitude > 0.1) {
                 tryAutoJump(world, velX * dt, velZ * dt)
             }
             if (!isGrounded) {
@@ -178,7 +178,7 @@ class Player(
                     velY = terminalVelocity
                 }
             } else {
-                if (velY < 0f) velY = 0f
+                if (velY < 0.0) velY = 0.0
             }
         }
 
@@ -186,30 +186,30 @@ class Player(
         moveWithCollision(velX * dt, velY * dt, velZ * dt, world)
     }
 
-    private fun tryAutoJump(world: World, stepDx: Float, stepDz: Float) {
+    private fun tryAutoJump(world: World, stepDx: Double, stepDz: Double) {
         val probeLen = sqrt(stepDx * stepDx + stepDz * stepDz)
-        if (probeLen < 1e-4f) return
+        if (probeLen < 1e-6) return
         val dirX = stepDx / probeLen
         val dirZ = stepDz / probeLen
-        val lookAheadDist = (radius + 0.18f)
+        val lookAheadDist = (radius + 0.18)
 
         scratchFeetStepBox.set(
-            posX + dirX * lookAheadDist - radius * 0.8f,
-            posY + 0.05f,
-            posZ + dirZ * lookAheadDist - radius * 0.8f,
-            posX + dirX * lookAheadDist + radius * 0.8f,
-            posY + 0.95f,
-            posZ + dirZ * lookAheadDist + radius * 0.8f
+            posX + dirX * lookAheadDist - radius * 0.8,
+            posY + 0.05,
+            posZ + dirZ * lookAheadDist - radius * 0.8,
+            posX + dirX * lookAheadDist + radius * 0.8,
+            posY + 0.95,
+            posZ + dirZ * lookAheadDist + radius * 0.8
         )
         if (!hasBlockCollision(scratchFeetStepBox, world)) return
 
         scratchClearanceBox.set(
-            posX + dirX * lookAheadDist - radius * 0.8f,
-            posY + 1.05f,
-            posZ + dirZ * lookAheadDist - radius * 0.8f,
-            posX + dirX * lookAheadDist + radius * 0.8f,
-            posY + 1.05f + currentHeight,
-            posZ + dirZ * lookAheadDist + radius * 0.8f
+            posX + dirX * lookAheadDist - radius * 0.8,
+            posY + 1.05,
+            posZ + dirZ * lookAheadDist - radius * 0.8,
+            posX + dirX * lookAheadDist + radius * 0.8,
+            posY + 1.05 + currentHeight,
+            posZ + dirZ * lookAheadDist + radius * 0.8
         )
         if (!hasBlockCollision(scratchClearanceBox, world)) {
             jump()
@@ -234,13 +234,13 @@ class Player(
         updateBoundingBox()
     }
 
-    private fun moveWithCollision(dx: Float, dy: Float, dz: Float, world: World) {
+    private fun moveWithCollision(dx: Double, dy: Double, dz: Double, world: World) {
         var resolvedDx = dx
         var resolvedDy = dy
         var resolvedDz = dz
 
         // --- Y Axis Collision (Ground / Ceiling) ---
-        if (resolvedDy != 0f) {
+        if (resolvedDy != 0.0) {
             val testBoxY = scratchMoveTestBox
             testBoxY.set(
                 posX - radius, posY + resolvedDy, posZ - radius,
@@ -260,20 +260,23 @@ class Player(
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
                             val blockBox = scratchBlockBox
-                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            blockBox.set(
+                                bx.toDouble(), by.toDouble(), bz.toDouble(),
+                                bx + 1.0, by + 1.0, bz + 1.0
+                            )
                             if (testBoxY.intersects(blockBox)) {
-                                if (resolvedDy < 0f) {
+                                if (resolvedDy < 0.0) {
                                     // Landed on block top
                                     posY = blockBox.maxY
-                                    resolvedDy = 0f
-                                    velY = 0f
+                                    resolvedDy = 0.0
+                                    velY = 0.0
                                     isGrounded = true
                                     collidedY = true
-                                } else if (resolvedDy > 0f) {
+                                } else if (resolvedDy > 0.0) {
                                     // Hit block ceiling
                                     posY = blockBox.minY - currentHeight
-                                    resolvedDy = 0f
-                                    velY = 0f
+                                    resolvedDy = 0.0
+                                    velY = 0.0
                                     collidedY = true
                                 }
                                 break
@@ -294,11 +297,11 @@ class Player(
         checkGroundSupport(world)
 
         // --- X Axis Collision ---
-        if (resolvedDx != 0f) {
+        if (resolvedDx != 0.0) {
             val testBoxX = scratchMoveTestBox
             testBoxX.set(
-                posX + resolvedDx - radius, posY + 0.05f, posZ - radius,
-                posX + resolvedDx + radius, posY + currentHeight - 0.05f, posZ + radius
+                posX + resolvedDx - radius, posY + 0.05, posZ - radius,
+                posX + resolvedDx + radius, posY + currentHeight - 0.05, posZ + radius
             )
             val minX = floor(testBoxX.minX).toInt()
             val maxX = floor(testBoxX.maxX).toInt()
@@ -314,15 +317,18 @@ class Player(
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
                             val blockBox = scratchBlockBox
-                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            blockBox.set(
+                                bx.toDouble(), by.toDouble(), bz.toDouble(),
+                                bx + 1.0, by + 1.0, bz + 1.0
+                            )
                             if (testBoxX.intersects(blockBox)) {
-                                if (resolvedDx > 0f) {
-                                    posX = blockBox.minX - radius - 0.001f
+                                if (resolvedDx > 0.0) {
+                                    posX = blockBox.minX - radius - 0.001
                                 } else {
-                                    posX = blockBox.maxX + radius + 0.001f
+                                    posX = blockBox.maxX + radius + 0.001
                                 }
-                                resolvedDx = 0f
-                                velX = 0f
+                                resolvedDx = 0.0
+                                velX = 0.0
                                 collidedX = true
                                 break
                             }
@@ -339,11 +345,11 @@ class Player(
         }
 
         // --- Z Axis Collision ---
-        if (resolvedDz != 0f) {
+        if (resolvedDz != 0.0) {
             val testBoxZ = scratchMoveTestBox
             testBoxZ.set(
-                posX - radius, posY + 0.05f, posZ + resolvedDz - radius,
-                posX + radius, posY + currentHeight - 0.05f, posZ + resolvedDz + radius
+                posX - radius, posY + 0.05, posZ + resolvedDz - radius,
+                posX + radius, posY + currentHeight - 0.05, posZ + resolvedDz + radius
             )
             val minX = floor(testBoxZ.minX).toInt()
             val maxX = floor(testBoxZ.maxX).toInt()
@@ -359,15 +365,18 @@ class Player(
                         val block = world.getBlock(bx, by, bz)
                         if (block.isSolid) {
                             val blockBox = scratchBlockBox
-                            blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                            blockBox.set(
+                                bx.toDouble(), by.toDouble(), bz.toDouble(),
+                                bx + 1.0, by + 1.0, bz + 1.0
+                            )
                             if (testBoxZ.intersects(blockBox)) {
-                                if (resolvedDz > 0f) {
-                                    posZ = blockBox.minZ - radius - 0.001f
+                                if (resolvedDz > 0.0) {
+                                    posZ = blockBox.minZ - radius - 0.001
                                 } else {
-                                    posZ = blockBox.maxZ + radius + 0.001f
+                                    posZ = blockBox.maxZ + radius + 0.001
                                 }
-                                resolvedDz = 0f
-                                velZ = 0f
+                                resolvedDz = 0.0
+                                velZ = 0.0
                                 collidedZ = true
                                 break
                             }
@@ -383,15 +392,17 @@ class Player(
             }
         }
 
-        // World boundary containment (only clamp X/Z in legacy finite worlds; Y stays [0..sizeY])
+        // World boundary containment (only clamp X/Z/Y ceiling in finite worlds; allow vertical /fpptest above sizeY in infinite worlds)
         if (!world.isInfinite) {
-            posX = posX.coerceIn(radius + 0.05f, world.sizeX - radius - 0.05f)
-            posZ = posZ.coerceIn(radius + 0.05f, world.sizeZ - radius - 0.05f)
+            posX = posX.coerceIn(radius + 0.05, world.sizeX - radius - 0.05)
+            posZ = posZ.coerceIn(radius + 0.05, world.sizeZ - radius - 0.05)
+            posY = posY.coerceIn(0.1, world.sizeY - currentHeight - 0.1)
+        } else if (posY < 0.1) {
+            posY = 0.1
         }
-        posY = posY.coerceIn(0.1f, world.sizeY - currentHeight - 0.1f)
 
         // Void recovery: respawn on surface at current X/Z if fallen into void
-        if (posY <= 0.2f) {
+        if (posY <= 0.2) {
             spawnAtSurface(world, posX, posZ)
         }
 
@@ -400,8 +411,8 @@ class Player(
 
     private fun checkGroundSupport(world: World) {
         scratchGroundTestBox.set(
-            posX - radius + 0.05f, posY - 0.08f, posZ - radius + 0.05f,
-            posX + radius - 0.05f, posY + 0.01f, posZ + radius - 0.05f
+            posX - radius + 0.05, posY - 0.08, posZ - radius + 0.05,
+            posX + radius - 0.05, posY + 0.01, posZ + radius - 0.05
         )
         isGrounded = hasBlockCollision(scratchGroundTestBox, world)
     }
@@ -420,7 +431,10 @@ class Player(
                 for (bz in minZ..maxZ) {
                     val block = world.getBlock(bx, by, bz)
                     if (block.isSolid) {
-                        blockBox.set(bx.toFloat(), by.toFloat(), bz.toFloat(), bx + 1f, by + 1f, bz + 1f)
+                        blockBox.set(
+                            bx.toDouble(), by.toDouble(), bz.toDouble(),
+                            bx + 1.0, by + 1.0, bz + 1.0
+                        )
                         if (aabb.intersects(blockBox)) {
                             return true
                         }
@@ -431,14 +445,14 @@ class Player(
         return false
     }
 
-    fun spawnAtSurface(world: World, spawnX: Float = 24.5f, spawnZ: Float = 24.5f) {
+    fun spawnAtSurface(world: World, spawnX: Double = 24.5, spawnZ: Double = 24.5) {
         posX = spawnX
         posZ = spawnZ
         val surfaceY = world.getSurfaceHeight(floor(spawnX).toInt(), floor(spawnZ).toInt())
-        posY = surfaceY + 1.05f
-        velX = 0f
-        velY = 0f
-        velZ = 0f
+        posY = surfaceY + 1.05
+        velX = 0.0
+        velY = 0.0
+        velZ = 0.0
         isGrounded = true
         isCrouching = false
         pitch = 0f

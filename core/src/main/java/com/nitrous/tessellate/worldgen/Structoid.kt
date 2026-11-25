@@ -120,11 +120,11 @@ class StructoidPass(
                         } else {
                             val noise = PerlinNoise.noise3DNormalized(
                                 world.seed + seedOffset,
-                                wx * def.noiseFrequency,
-                                wy * def.noiseFrequency,
-                                wz * def.noiseFrequency
+                                wx.toDouble() * def.noiseFrequency,
+                                wy.toDouble() * def.noiseFrequency,
+                                wz.toDouble() * def.noiseFrequency
                             )
-                            noise > def.noiseThreshold
+                            noise > def.noiseThreshold.toDouble()
                         }
                         if (shouldCarve) {
                             chunk.setBlockRaw(lx, ly, lz, air)

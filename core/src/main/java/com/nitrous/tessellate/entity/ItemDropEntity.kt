@@ -51,7 +51,7 @@ open class ItemDropEntity(
         private set
 
     /** Deterministic per-drop phase offset so neighboring item piles bob organically. */
-    val bobPhaseOffset: Float = ((abs(position.x * 11.37f + position.z * 7.91f) % 1.0f) * (2.0 * PI)).toFloat()
+    val bobPhaseOffset: Float = ((abs(position.x * 11.37 + position.z * 7.91) % 1.0) * (2.0 * PI)).toFloat()
 
     override val typeId: String
         get() = TYPE_ID
@@ -76,9 +76,9 @@ open class ItemDropEntity(
 
     override fun updateRenderState(reuse: EntityRenderState?): ItemDropRenderState {
         val state = (reuse as? ItemDropRenderState) ?: ItemDropRenderState()
-        state.centerX = (boundingBox.minX + boundingBox.maxX) * 0.5f
-        state.centerY = (boundingBox.minY + boundingBox.maxY) * 0.5f
-        state.centerZ = (boundingBox.minZ + boundingBox.maxZ) * 0.5f
+        state.centerX = (boundingBox.minX + boundingBox.maxX) * 0.5
+        state.centerY = (boundingBox.minY + boundingBox.maxY) * 0.5
+        state.centerZ = (boundingBox.minZ + boundingBox.maxZ) * 0.5
         state.scale = WIDTH
         state.yawRadians = rotationYawRadians
         state.bobOffsetY = bobOffsetY
@@ -127,24 +127,25 @@ open class ItemDropEntity(
 
         updateAnimationState(deltaTime)
 
-        val projectedEndVy = (velocity.y - GRAVITY * deltaTime).coerceAtLeast(TERMINAL_VELOCITY_Y)
+        val dt = deltaTime.toDouble()
+        val projectedEndVy = (velocity.y - GRAVITY * dt).coerceAtLeast(TERMINAL_VELOCITY_Y)
         val maxSpeedY = maxOf(abs(velocity.y), abs(projectedEndVy))
-        val displacementSteps = ceil((maxSpeedY * deltaTime) / MAX_SUBSTEP_DISPLACEMENT).toInt()
-        val timeSteps = ceil(deltaTime / MAX_SUBSTEP_DT).toInt()
+        val displacementSteps = ceil((maxSpeedY * dt) / MAX_SUBSTEP_DISPLACEMENT).toInt()
+        val timeSteps = ceil(dt / MAX_SUBSTEP_DT).toInt()
         val steps = maxOf(1, displacementSteps, timeSteps).coerceAtMost(MAX_SUBSTEPS)
-        val stepDt = deltaTime / steps
+        val stepDt = dt / steps
 
-        val eps = 1e-4f
-        val minBx = floor(position.x - HALF_WIDTH + eps).toInt()
-        val maxBx = floor(position.x + HALF_WIDTH - eps).toInt()
-        val minBz = floor(position.z - HALF_DEPTH + eps).toInt()
-        val maxBz = floor(position.z + HALF_DEPTH - eps).toInt()
+        val eps = 1e-6
+        val minBx = floor(position.x - HALF_WIDTH_D + eps).toInt()
+        val maxBx = floor(position.x + HALF_WIDTH_D - eps).toInt()
+        val minBz = floor(position.z - HALF_DEPTH_D + eps).toInt()
+        val maxBz = floor(position.z + HALF_DEPTH_D - eps).toInt()
 
         for (step in 0 until steps) {
             if (isRemoved) break
 
             val prevMinY = position.y
-            val prevMaxY = position.y + HEIGHT
+            val prevMaxY = position.y + HEIGHT_D
 
             velocity.y -= GRAVITY * stepDt
             if (velocity.y < TERMINAL_VELOCITY_Y) {
@@ -171,16 +172,16 @@ open class ItemDropEntity(
 
     private fun resolveVerticalCollisions(
         world: World,
-        prevMinY: Float,
-        prevMaxY: Float,
+        prevMinY: Double,
+        prevMaxY: Double,
         minBx: Int,
         maxBx: Int,
         minBz: Int,
         maxBz: Int
     ) {
-        val eps = 1e-4f
+        val eps = 1e-6
         val curMinY = position.y
-        val curMaxY = position.y + HEIGHT
+        val curMaxY = position.y + HEIGHT_D
 
         val sweptMinY = minOf(prevMinY, curMinY)
         val sweptMaxY = maxOf(prevMaxY, curMaxY)
@@ -188,8 +189,8 @@ open class ItemDropEntity(
         val maxBy = floor(sweptMaxY - eps).toInt().coerceIn(0, world.sizeY - 1)
         if (maxBy < minBy) return
 
-        if (velocity.y <= 0f) {
-            var hitFloorY = Float.NEGATIVE_INFINITY
+        if (velocity.y <= 0.0) {
+            var hitFloorY = Double.NEGATIVE_INFINITY
 
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
@@ -197,9 +198,9 @@ open class ItemDropEntity(
                         val block = world.getBlock(bx, by, bz)
                         if (!isBlockSolid(block)) continue
 
-                        val blockTopY = by + 1.0f
+                        val blockTopY = by + 1.0
                         val crossedFromAbove = prevMinY >= blockTopY - eps && curMinY <= blockTopY
-                        val overlapsBlock = curMinY < blockTopY && curMaxY > by.toFloat()
+                        val overlapsBlock = curMinY < blockTopY && curMaxY > by.toDouble()
 
                         if (crossedFromAbove || overlapsBlock) {
                             if (blockTopY > hitFloorY) {
@@ -212,10 +213,10 @@ open class ItemDropEntity(
 
             if (hitFloorY.isFinite()) {
                 position.y = hitFloorY
-                velocity.y = 0f
+                velocity.y = 0.0
             }
         } else {
-            var hitCeilingY = Float.POSITIVE_INFINITY
+            var hitCeilingY = Double.POSITIVE_INFINITY
 
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
@@ -223,9 +224,9 @@ open class ItemDropEntity(
                         val block = world.getBlock(bx, by, bz)
                         if (!isBlockSolid(block)) continue
 
-                        val blockBottomY = by.toFloat()
+                        val blockBottomY = by.toDouble()
                         val crossedFromBelow = prevMaxY <= blockBottomY + eps && curMaxY >= blockBottomY
-                        val overlapsBlock = curMinY < (by + 1.0f) && curMaxY > blockBottomY
+                        val overlapsBlock = curMinY < (by + 1.0) && curMaxY > blockBottomY
 
                         if (crossedFromBelow || overlapsBlock) {
                             if (blockBottomY < hitCeilingY) {
@@ -237,8 +238,8 @@ open class ItemDropEntity(
             }
 
             if (hitCeilingY.isFinite()) {
-                position.y = hitCeilingY - HEIGHT
-                velocity.y = 0f
+                position.y = hitCeilingY - HEIGHT_D
+                velocity.y = 0.0
             }
         }
     }
@@ -250,12 +251,12 @@ open class ItemDropEntity(
 
     override fun updateBoundingBox() {
         boundingBox.set(
-            position.x - HALF_WIDTH,
+            position.x - HALF_WIDTH_D,
             position.y,
-            position.z - HALF_DEPTH,
-            position.x + HALF_WIDTH,
-            position.y + HEIGHT,
-            position.z + HALF_DEPTH
+            position.z - HALF_DEPTH_D,
+            position.x + HALF_WIDTH_D,
+            position.y + HEIGHT_D,
+            position.z + HALF_DEPTH_D
         )
     }
 
@@ -266,6 +267,9 @@ open class ItemDropEntity(
         const val DEPTH: Float = 0.25f
         const val HALF_WIDTH: Float = WIDTH * 0.5f
         const val HALF_DEPTH: Float = DEPTH * 0.5f
+        const val HEIGHT_D: Double = 0.25
+        const val HALF_WIDTH_D: Double = 0.125
+        const val HALF_DEPTH_D: Double = 0.125
 
         const val SPIN_DEGREES_PER_SEC: Float = 90.0f
         const val BOB_RAD_PER_SEC: Float = 3.2f
@@ -273,20 +277,20 @@ open class ItemDropEntity(
         const val FLOAT_BASE_OFFSET_Y: Float = 0.10f
         const val MAX_RENDER_STACK_LAYERS: Int = 64
 
-        private const val MAX_SUBSTEP_DT: Float = 0.01f
-        private const val MAX_SUBSTEP_DISPLACEMENT: Float = 0.125f
+        private const val MAX_SUBSTEP_DT: Double = 0.01
+        private const val MAX_SUBSTEP_DISPLACEMENT: Double = 0.125
         private const val MAX_SUBSTEPS: Int = 512
-        private const val TERMINAL_VELOCITY_Y: Float = -35.0f
-        private const val VOID_DESPAWN_Y: Float = -64.0f
+        private const val TERMINAL_VELOCITY_Y: Double = -35.0
+        private const val VOID_DESPAWN_Y: Double = -64.0
 
         private fun createBoundingBox(position: Vec3): AABB {
             return AABB(
-                position.x - HALF_WIDTH,
+                position.x - HALF_WIDTH_D,
                 position.y,
-                position.z - HALF_DEPTH,
-                position.x + HALF_WIDTH,
-                position.y + HEIGHT,
-                position.z + HALF_DEPTH
+                position.z - HALF_DEPTH_D,
+                position.x + HALF_WIDTH_D,
+                position.y + HEIGHT_D,
+                position.z + HALF_DEPTH_D
             )
         }
     }

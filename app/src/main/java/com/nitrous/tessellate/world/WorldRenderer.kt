@@ -399,8 +399,8 @@ class WorldRenderer(
     fun updateMeshes(
         texturePipeline: TexturePipeline,
         uploadToGpu: Boolean = true,
-        focusX: Float = 0f,
-        focusZ: Float = 0f,
+        focusX: Double = 0.0,
+        focusZ: Double = 0.0,
         currentFrameIndex: Long = 0L
     ) {
         if (uploadToGpu) {
@@ -570,9 +570,9 @@ class WorldRenderer(
      */
     private fun updateVisibleChunks(
         viewProjectionMatrix: FloatArray,
-        cameraX: Float = 0f,
-        cameraY: Float = 0f,
-        cameraZ: Float = 0f,
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0,
         sortByDistance: Boolean = false,
         outList: MutableList<ChunkMesh> = visibleChunkMeshes
     ) {
@@ -591,7 +591,7 @@ class WorldRenderer(
                     emptySkipped++
                     continue
                 }
-                if (frustum.intersectsAabb(mesh.worldBounds)) {
+                if (frustum.intersectsRelativeAabb(mesh.worldBounds, cameraX, cameraY, cameraZ)) {
                     if (sortByDistance) {
                         val dx = mesh.centerX - cameraX
                         val dy = mesh.centerY - cameraY
@@ -620,9 +620,9 @@ class WorldRenderer(
      */
     fun computeVisibleChunks(
         viewProjectionMatrix: FloatArray,
-        cameraX: Float = 0f,
-        cameraY: Float = 0f,
-        cameraZ: Float = 0f,
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0,
         sortFrontToBack: Boolean = true
     ): List<ChunkMesh> {
         updateVisibleChunks(
@@ -645,9 +645,9 @@ class WorldRenderer(
         viewProjectionMatrix: FloatArray,
         texturePipeline: TexturePipeline,
         targetHit: RaycastHit?,
-        cameraX: Float = 0f,
-        cameraY: Float = 0f,
-        cameraZ: Float = 0f
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0
     ) {
         lastFrameAtlasBindCount = 0
         lastRenderedChunksCount = 0
@@ -691,7 +691,12 @@ class WorldRenderer(
                 renderedChunks++
             }
             if (mesh.opaqueIndexCount > 0) {
-                shader.setUniform3f("uChunkOrigin", mesh.originX, mesh.originY, mesh.originZ)
+                shader.setUniform3f(
+                    "uChunkOrigin",
+                    (mesh.originX - cameraX).toFloat(),
+                    (mesh.originY - cameraY).toFloat(),
+                    (mesh.originZ - cameraZ).toFloat()
+                )
                 mesh.renderOpaque()
             }
         }
@@ -704,7 +709,12 @@ class WorldRenderer(
         for (i in visibleChunks.size - 1 downTo 0) {
             val mesh = visibleChunks[i]
             if (mesh.transparentIndexCount > 0) {
-                shader.setUniform3f("uChunkOrigin", mesh.originX, mesh.originY, mesh.originZ)
+                shader.setUniform3f(
+                    "uChunkOrigin",
+                    (mesh.originX - cameraX).toFloat(),
+                    (mesh.originY - cameraY).toFloat(),
+                    (mesh.originZ - cameraZ).toFloat()
+                )
                 mesh.renderTransparent()
             }
         }
@@ -713,20 +723,26 @@ class WorldRenderer(
         shader.unbind()
 
         if (targetHit != null && highlightShader != null && highlightVaoId != 0) {
-            renderBlockOutline(viewProjectionMatrix, targetHit.blockPos)
+            renderBlockOutline(viewProjectionMatrix, targetHit.blockPos, cameraX, cameraY, cameraZ)
         }
     }
 
-    private fun renderBlockOutline(viewProjMatrix: FloatArray, pos: BlockPos) {
-        val inset = 0.003f
+    private fun renderBlockOutline(
+        viewProjMatrix: FloatArray,
+        pos: BlockPos,
+        cameraX: Double,
+        cameraY: Double,
+        cameraZ: Double
+    ) {
+        val inset = 0.003
         renderAabbOutline(
             viewProjMatrix = viewProjMatrix,
-            minX = pos.x - inset,
-            minY = pos.y - inset,
-            minZ = pos.z - inset,
-            maxX = pos.x + 1f + inset,
-            maxY = pos.y + 1f + inset,
-            maxZ = pos.z + 1f + inset,
+            minX = (pos.x - inset - cameraX).toFloat(),
+            minY = (pos.y - inset - cameraY).toFloat(),
+            minZ = (pos.z - inset - cameraZ).toFloat(),
+            maxX = (pos.x + 1.0 + inset - cameraX).toFloat(),
+            maxY = (pos.y + 1.0 + inset - cameraY).toFloat(),
+            maxZ = (pos.z + 1.0 + inset - cameraZ).toFloat(),
             r = 1.0f,
             g = 0.9f,
             b = 0.2f,
@@ -741,7 +757,10 @@ class WorldRenderer(
     fun renderHitboxes(
         viewProjMatrix: FloatArray,
         entities: List<Entity>,
-        player: Player? = null
+        player: Player? = null,
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0
     ) {
         if (!showHitboxes) return
         if (highlightShader == null || highlightVaoId == 0) return
@@ -752,12 +771,12 @@ class WorldRenderer(
             val box = e.boundingBox
             renderAabbOutline(
                 viewProjMatrix = viewProjMatrix,
-                minX = box.minX,
-                minY = box.minY,
-                minZ = box.minZ,
-                maxX = box.maxX,
-                maxY = box.maxY,
-                maxZ = box.maxZ,
+                minX = (box.minX - cameraX).toFloat(),
+                minY = (box.minY - cameraY).toFloat(),
+                minZ = (box.minZ - cameraZ).toFloat(),
+                maxX = (box.maxX - cameraX).toFloat(),
+                maxY = (box.maxY - cameraY).toFloat(),
+                maxZ = (box.maxZ - cameraZ).toFloat(),
                 r = 0.15f,
                 g = 0.95f,
                 b = 1.0f,
@@ -769,12 +788,12 @@ class WorldRenderer(
             val box = player.boundingBox
             renderAabbOutline(
                 viewProjMatrix = viewProjMatrix,
-                minX = box.minX,
-                minY = box.minY,
-                minZ = box.minZ,
-                maxX = box.maxX,
-                maxY = box.maxY,
-                maxZ = box.maxZ,
+                minX = (box.minX - cameraX).toFloat(),
+                minY = (box.minY - cameraY).toFloat(),
+                minZ = (box.minZ - cameraZ).toFloat(),
+                maxX = (box.maxX - cameraX).toFloat(),
+                maxY = (box.maxY - cameraY).toFloat(),
+                maxZ = (box.maxZ - cameraZ).toFloat(),
                 r = 0.2f,
                 g = 1.0f,
                 b = 0.45f,

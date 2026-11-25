@@ -192,12 +192,12 @@ class Tdd018InventoryAndCraftingTest {
 
             // Verify 3D world and player physics pause while AppState.INVENTORY is open
             val player = engine.worldScene.player
-            player.posY += 3.0f
-            player.velY = -1.0f
+            player.posY += 3.0
+            player.velY = -1.0
             val frozenX = player.posX
             val frozenY = player.posY
             val frozenZ = player.posZ
-            val drop = ItemDropEntity(position = Vec3(player.posX + 1.5f, player.posY, player.posZ), itemId = "tessellate:dirt")
+            val drop = ItemDropEntity(position = Vec3(player.posX + 1.5, player.posY, player.posZ), itemId = "tessellate:dirt")
             engine.worldScene.world.spawnEntity(drop)
             val dropYBefore = drop.position.y
 
@@ -205,10 +205,10 @@ class Tdd018InventoryAndCraftingTest {
                 Thread.sleep(10L)
                 engine.onDrawFrame()
             }
-            assertEquals(frozenX, player.posX, 1e-5f)
-            assertEquals(frozenY, player.posY, 1e-5f)
-            assertEquals(frozenZ, player.posZ, 1e-5f)
-            assertEquals(dropYBefore, drop.position.y, 1e-5f)
+            assertEquals(frozenX, player.posX, 1e-5)
+            assertEquals(frozenY, player.posY, 1e-5)
+            assertEquals(frozenZ, player.posZ, 1e-5)
+            assertEquals(dropYBefore, drop.position.y, 1e-5)
             assertEquals(0, drop.tickCount)
 
             // Put an item in crafting grid so we verify closing via scrim returns it safely

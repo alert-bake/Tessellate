@@ -406,9 +406,9 @@ class Tdd016SettingsAndModdingTest {
             val targetChunkY = 0
             val targetChunkZ = 1
             assertTrue(engine.worldScene.world.hasChunk(targetChunkX, targetChunkY, targetChunkZ))
-            player.posX = 24.5f
-            player.posY = 8.0f
-            player.posZ = 24.5f
+            player.posX = 24.5
+            player.posY = 8.0
+            player.posZ = 24.5
             player.pitch = -85f
             engine.camera.setFirstPersonView(player.posX, player.eyeY, player.posZ, player.pitch, player.yaw)
             engine.worldScene.updateCameraRaycast(engine.camera)

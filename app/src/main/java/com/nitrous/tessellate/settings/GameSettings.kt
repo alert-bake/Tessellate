@@ -13,6 +13,8 @@ data class GameSettings(
     var soundVolume: Float = 1.0f,
     var maxFps: Int = 60,
     var viewBobbing: Boolean = true,
+    var mipmapping: Boolean = true,
+    var anisotropicFiltering: Boolean = true,
     var uiScale: Float = 1.0f,
     var invertYAxis: Boolean = false,
     var autoJump: Boolean = false,

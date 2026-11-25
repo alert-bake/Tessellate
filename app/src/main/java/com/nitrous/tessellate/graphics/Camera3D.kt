@@ -19,9 +19,9 @@ class Camera3D(
     override val projectionMatrix: FloatArray = Matrix4.create()
     override val viewProjectionMatrix: FloatArray = Matrix4.create()
 
-    var targetX: Float = 0f
-    var targetY: Float = 0f
-    var targetZ: Float = 0f
+    var targetX: Double = 0.0
+    var targetY: Double = 0.0
+    var targetZ: Double = 0.0
 
     var minDistance: Float = 1.2f
     var maxDistance: Float = 120f
@@ -37,11 +37,11 @@ class Camera3D(
             field = value.coerceIn(minDistance, maxDistance)
         }
 
-    var eyeX: Float = 0f
+    var eyeX: Double = 0.0
         private set
-    var eyeY: Float = 0f
+    var eyeY: Double = 0.0
         private set
-    var eyeZ: Float = 0f
+    var eyeZ: Double = 0.0
         private set
 
     var forwardX: Float = 0f
@@ -95,12 +95,14 @@ class Camera3D(
 
     /**
      * Updates First-Person camera transformation placed at the player's eye level.
+     * The GPU [viewMatrix] is always camera-relative (eye fixed at `(0, 0, 0)`), preserving full
+     * 32-bit float precision regardless of world coordinate magnitude.
      */
     @Synchronized
     fun setFirstPersonView(
-        posX: Float,
-        posY: Float,
-        posZ: Float,
+        posX: Double,
+        posY: Double,
+        posZ: Double,
         playerPitch: Float,
         playerYaw: Float
     ) {
@@ -115,18 +117,23 @@ class Camera3D(
         val yawRad = Math.toRadians(yaw.toDouble())
 
         // Calculate directional forward vector
-        forwardX = (sin(yawRad) * cos(pitchRad)).toFloat()
-        forwardY = sin(pitchRad).toFloat()
-        forwardZ = (-cos(yawRad) * cos(pitchRad)).toFloat()
+        val fx = sin(yawRad) * cos(pitchRad)
+        val fy = sin(pitchRad)
+        val fz = -cos(yawRad) * cos(pitchRad)
 
-        targetX = eyeX + forwardX
-        targetY = eyeY + forwardY
-        targetZ = eyeZ + forwardZ
+        forwardX = fx.toFloat()
+        forwardY = fy.toFloat()
+        forwardZ = fz.toFloat()
 
+        targetX = eyeX + fx
+        targetY = eyeY + fy
+        targetZ = eyeZ + fz
+
+        // Camera-relative view matrix: camera is always at (0, 0, 0) in shader space
         Matrix4.lookAt(
             viewMatrix,
-            eyeX, eyeY, eyeZ,
-            targetX, targetY, targetZ,
+            0f, 0f, 0f,
+            forwardX, forwardY, forwardZ,
             0f, 1f, 0f
         )
         updateViewProjection()
@@ -134,6 +141,7 @@ class Camera3D(
 
     /**
      * Updates Orbit camera transformation looking at (targetX, targetY, targetZ).
+     * The GPU [viewMatrix] stays camera-relative at `(0, 0, 0)`.
      */
     @Synchronized
     override fun updateView() {
@@ -144,10 +152,11 @@ class Camera3D(
 
         val pitchRad = Math.toRadians(pitch.toDouble())
         val yawRad = Math.toRadians(yaw.toDouble())
+        val dist = distance.toDouble()
 
-        val offsetX = (distance * cos(pitchRad) * sin(yawRad)).toFloat()
-        val offsetY = (distance * sin(pitchRad)).toFloat()
-        val offsetZ = (distance * cos(pitchRad) * cos(yawRad)).toFloat()
+        val offsetX = dist * cos(pitchRad) * sin(yawRad)
+        val offsetY = dist * sin(pitchRad)
+        val offsetZ = dist * cos(pitchRad) * cos(yawRad)
 
         eyeX = targetX + offsetX
         eyeY = targetY + offsetY
@@ -156,15 +165,15 @@ class Camera3D(
         val dx = targetX - eyeX
         val dy = targetY - eyeY
         val dz = targetZ - eyeZ
-        val len = sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(0.0001f)
-        forwardX = dx / len
-        forwardY = dy / len
-        forwardZ = dz / len
+        val len = sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(0.0001)
+        forwardX = (dx / len).toFloat()
+        forwardY = (dy / len).toFloat()
+        forwardZ = (dz / len).toFloat()
 
         Matrix4.lookAt(
             viewMatrix,
-            eyeX, eyeY, eyeZ,
-            targetX, targetY, targetZ,
+            0f, 0f, 0f,
+            forwardX, forwardY, forwardZ,
             0f, 1f, 0f
         )
         updateViewProjection()
@@ -188,7 +197,7 @@ class Camera3D(
     }
 
     @Synchronized
-    fun setTarget(tx: Float, ty: Float, tz: Float, dist: Float, p: Float = 30f, y: Float = 45f) {
+    fun setTarget(tx: Double, ty: Double, tz: Double, dist: Float, p: Float = 30f, y: Float = 45f) {
         isFirstPerson = false
         targetX = tx
         targetY = ty
@@ -205,9 +214,9 @@ class Camera3D(
             pitch = 0f
             yaw = 0f
         } else {
-            targetX = 0f
-            targetY = 0f
-            targetZ = 0f
+            targetX = 0.0
+            targetY = 0.0
+            targetZ = 0.0
             pitch = 28f
             yaw = 45f
             distance = 4.2f

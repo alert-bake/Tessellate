@@ -77,6 +77,26 @@ object VanillaSettingsRegistrar {
         )
 
         refs.registerProperty(
+            id = "TexturePipeline.mipmapping",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.mipmapping },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(mipmapping = v) }
+            }
+        )
+
+        refs.registerProperty(
+            id = "TexturePipeline.anisotropicFiltering",
+            valueType = ReferenceValueType.BOOLEAN,
+            getter = { engine.currentSettings.anisotropicFiltering },
+            setter = { raw ->
+                val v = raw as Boolean
+                engine.updateAndPersistSettings { it.copy(anisotropicFiltering = v) }
+            }
+        )
+
+        refs.registerProperty(
             id = "Ui.scale",
             valueType = ReferenceValueType.NUMBER,
             getter = { engine.currentSettings.uiScale.toDouble() },
@@ -370,6 +390,34 @@ object VanillaSettingsRegistrar {
                 screen = SettingScreenTarget.SETTINGS,
                 order = 50,
                 valueFormatter = { v -> "${(((v as? Number)?.toDouble() ?: 1.0) * 100.0).roundToInt()}%" }
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:mipmapping",
+                label = "Mipmapping",
+                description = "Trilinear mipmap filtering to eliminate distant texture shimmer",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "TexturePipeline.mipmapping",
+                defaultValue = defaults.mipmapping,
+                categoryId = CAT_VIDEO,
+                screen = SettingScreenTarget.SETTINGS,
+                order = 60
+            )
+        )
+
+        registry.registerSetting(
+            SettingDefinition(
+                id = "tessellate:anisotropic_filtering",
+                label = "Anisotropic Filtering",
+                description = "Reduces texture distortion on blocks viewed at shallow angles",
+                controlType = SettingControlType.TOGGLE,
+                referenceId = "TexturePipeline.anisotropicFiltering",
+                defaultValue = defaults.anisotropicFiltering,
+                categoryId = CAT_VIDEO,
+                screen = SettingScreenTarget.SETTINGS,
+                order = 70
             )
         )
 

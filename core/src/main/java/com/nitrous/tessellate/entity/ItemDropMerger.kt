@@ -89,8 +89,8 @@ class ItemDropMerger {
     }
 
     companion object {
-        const val ITEM_MERGE_RADIUS_BLOCKS: Float = 1.5f
-        const val ITEM_MERGE_RADIUS_SQ: Float = ITEM_MERGE_RADIUS_BLOCKS * ITEM_MERGE_RADIUS_BLOCKS
+        const val ITEM_MERGE_RADIUS_BLOCKS: Double = 1.5
+        const val ITEM_MERGE_RADIUS_SQ: Double = ITEM_MERGE_RADIUS_BLOCKS * ITEM_MERGE_RADIUS_BLOCKS
         const val MAX_MERGE_CHECKS_PER_ENTITY: Int = 5
     }
 }

@@ -275,12 +275,12 @@ class Tdd014WorldCreationAndSessionTest {
             assertEquals("Test World", engine.worldScene.currentSession?.name)
 
             // Pause freezes entities
-            val drop = ItemDropEntity(Vec3(24.5f, 90.0f, 24.5f))
+            val drop = ItemDropEntity(Vec3(24.5, 90.0, 24.5))
             engine.worldScene.world.spawnEntity(drop)
             val startY = drop.position.y
             engine.setPaused(true)
             engine.onDrawFrame()
-            assertEquals(startY, drop.position.y, 1e-4f)
+            assertEquals(startY, drop.position.y, 1e-4)
 
             // Pause -> Settings -> Back returns to PLAYING (paused)
             val ps = engine.uiRenderer.pauseScreen

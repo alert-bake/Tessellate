@@ -63,6 +63,7 @@ class JsonCommand(
             "spawn" -> handleSpawn(context.args, context.worldScene, context.camera)
             "instamine" -> handleInstaMine(context.worldScene)
             "fly" -> handleFly(context.worldScene)
+            "fpptest" -> handleFppTest(context.args, context.worldScene, context.camera)
             else -> {
                 val msg = definition.response?.takeIf { it.isNotBlank() }
                     ?: "Executed /$name"
@@ -119,11 +120,64 @@ class JsonCommand(
         val player = worldScene.player
         player.isFlying = !player.isFlying
         if (player.isFlying) {
-            player.velY = 0f
+            player.velY = 0.0
         }
         return CommandResult(
             success = true,
             message = if (player.isFlying) "Flight enabled" else "Flight disabled"
+        )
+    }
+
+    private fun handleFppTest(
+        args: List<String>,
+        worldScene: WorldScene,
+        camera: Camera3D?
+    ): CommandResult {
+        if (args.size !in 1..2) {
+            return CommandResult(false, "Usage: /fpptest <axis1> [axis2] (valid axes: X, Y, Z)")
+        }
+
+        val selectedAxes = linkedSetOf<String>()
+        for (rawArg in args) {
+            val normalized = rawArg.trim().uppercase(Locale.ROOT)
+            if (normalized != "X" && normalized != "Y" && normalized != "Z") {
+                return CommandResult(false, "Invalid axis '$rawArg'. Valid axes: X, Y, Z")
+            }
+            if (!selectedAxes.add(normalized)) {
+                return CommandResult(false, "Duplicate axis '$normalized'. Specify distinct axes from X, Y, Z")
+            }
+        }
+
+        val player = worldScene.player
+        val newX = if ("X" in selectedAxes) player.posX * FPP_TEST_MULTIPLIER else player.posX
+        val newY = if ("Y" in selectedAxes) player.posY * FPP_TEST_MULTIPLIER else player.posY
+        val newZ = if ("Z" in selectedAxes) player.posZ * FPP_TEST_MULTIPLIER else player.posZ
+
+        if (!newX.isFinite() || !newY.isFinite() || !newZ.isFinite()) {
+            return CommandResult(false, "Coordinate overflow while multiplying by $FPP_TEST_MULTIPLIER")
+        }
+
+        player.posX = newX
+        player.posY = newY
+        player.posZ = newZ
+        player.velX = 0.0
+        player.velY = 0.0
+        player.velZ = 0.0
+        player.updateBoundingBox()
+
+        camera?.setFirstPersonView(player.posX, player.eyeY, player.posZ, player.pitch, player.yaw)
+        worldScene.world.streamChunksAround(player.posX, player.posZ, forceCheck = true)
+
+        return CommandResult(
+            success = true,
+            message = String.format(
+                Locale.US,
+                "FPP test (%s) teleported to (%.2f, %.2f, %.2f)",
+                selectedAxes.joinToString(", "),
+                player.posX,
+                player.posY,
+                player.posZ
+            )
         )
     }
 
@@ -136,25 +190,25 @@ class JsonCommand(
             ?: return CommandResult(false, "Usage: /spawn <entity_id>")
 
         val player = worldScene.player
-        val forwardX: Float
-        val forwardY: Float
-        val forwardZ: Float
+        val forwardX: Double
+        val forwardY: Double
+        val forwardZ: Double
         if (camera != null && camera.isFirstPerson) {
-            forwardX = camera.forwardX
-            forwardY = camera.forwardY
-            forwardZ = camera.forwardZ
+            forwardX = camera.forwardX.toDouble()
+            forwardY = camera.forwardY.toDouble()
+            forwardZ = camera.forwardZ.toDouble()
         } else {
             val pitchRad = Math.toRadians(player.pitch.toDouble())
             val yawRad = Math.toRadians(player.yaw.toDouble())
-            forwardX = (sin(yawRad) * cos(pitchRad)).toFloat()
-            forwardY = sin(pitchRad).toFloat()
-            forwardZ = (-cos(yawRad) * cos(pitchRad)).toFloat()
+            forwardX = sin(yawRad) * cos(pitchRad)
+            forwardY = sin(pitchRad)
+            forwardZ = -cos(yawRad) * cos(pitchRad)
         }
 
         val spawnPos = Vec3(
-            x = player.posX + forwardX * 3.0f,
-            y = (player.eyeY + forwardY * 3.0f).coerceAtLeast(1.0f),
-            z = player.posZ + forwardZ * 3.0f
+            x = player.posX + forwardX * 3.0,
+            y = (player.eyeY + forwardY * 3.0).coerceAtLeast(1.0),
+            z = player.posZ + forwardZ * 3.0
         )
 
         val normalizedEntity = entityId.lowercase(Locale.ROOT)
@@ -187,5 +241,9 @@ class JsonCommand(
             true,
             "Spawned $entityId at (%.1f, %.1f, %.1f)".format(spawnPos.x, spawnPos.y, spawnPos.z)
         )
+    }
+
+    companion object {
+        const val FPP_TEST_MULTIPLIER: Double = 32676.0
     }
 }

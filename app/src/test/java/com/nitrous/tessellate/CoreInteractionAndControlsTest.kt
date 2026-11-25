@@ -247,9 +247,9 @@ class CoreInteractionAndControlsTest {
     fun `block placement is rejected inside player bounding box`() {
         val scene = WorldScene()
         val player = scene.player
-        player.posX = 15.5f
-        player.posY = 5.0f
-        player.posZ = 15.5f
+        player.posX = 15.5
+        player.posY = 5.0
+        player.posZ = 15.5
         player.updateBoundingBox()
 
         // Place target directly inside player's feet at (15, 5, 15)

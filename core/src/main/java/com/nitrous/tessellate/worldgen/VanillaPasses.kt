@@ -90,10 +90,15 @@ class SurfacePass(
     companion object {
         const val MIN_HEIGHT = 40
         const val MAX_HEIGHT = 80
-        private const val SURFACE_SCALE = 0.018f
+        private const val SURFACE_SCALE: Double = 0.018
 
         fun computeSurfaceY(seed: Long, wx: Int, wz: Int): Int {
-            val n = PerlinNoise.fbm2DNormalized(seed, wx * SURFACE_SCALE, wz * SURFACE_SCALE, octaves = 3)
+            val n = PerlinNoise.fbm2DNormalized(
+                seed,
+                wx.toDouble() * SURFACE_SCALE,
+                wz.toDouble() * SURFACE_SCALE,
+                octaves = 3
+            )
             return (MIN_HEIGHT + (n * (MAX_HEIGHT - MIN_HEIGHT)).toInt()).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
         }
     }
@@ -139,15 +144,20 @@ class CavePass(
 
     companion object {
         const val MAX_CAVE_Y = 60
-        const val NOISE_THRESHOLD = 0.6f
-        private const val CAVE_FREQ_XZ = 0.055f
-        private const val CAVE_FREQ_Y = 0.075f
+        const val NOISE_THRESHOLD: Double = 0.6
+        private const val CAVE_FREQ_XZ: Double = 0.055
+        private const val CAVE_FREQ_Y: Double = 0.075
 
         fun isCaveAt(seed: Long, wx: Int, wy: Int, wz: Int): Boolean {
             if (wy >= MAX_CAVE_Y) return false
-            // Boost amplitude gently around 0.5 so Perlin caves exceed 0.6f cleanly while remaining walkable
-            val raw = PerlinNoise.noise3D(seed + 4099L, wx * CAVE_FREQ_XZ, wy * CAVE_FREQ_Y, wz * CAVE_FREQ_XZ)
-            val normalized = 0.5f + raw * 0.9f
+            // Boost amplitude gently around 0.5 so Perlin caves exceed 0.6 cleanly while remaining walkable
+            val raw = PerlinNoise.noise3D(
+                seed + 4099L,
+                wx.toDouble() * CAVE_FREQ_XZ,
+                wy.toDouble() * CAVE_FREQ_Y,
+                wz.toDouble() * CAVE_FREQ_XZ
+            )
+            val normalized = 0.5 + raw * 0.9
             return normalized > NOISE_THRESHOLD
         }
     }

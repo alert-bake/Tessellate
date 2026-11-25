@@ -56,10 +56,10 @@ class DataDrivenWorldGenPass(
                             if (existing != BlockType.AIR &&
                                 PerlinNoise.noise3DNormalized(
                                     passSeed,
-                                    wx * definition.frequency,
-                                    wy * definition.frequency,
-                                    wz * definition.frequency
-                                ) > definition.threshold
+                                    wx.toDouble() * definition.frequency,
+                                    wy.toDouble() * definition.frequency,
+                                    wz.toDouble() * definition.frequency
+                                ) > definition.threshold.toDouble()
                             ) {
                                 chunk.setBlockRaw(lx, ly, lz, BlockType.AIR)
                             }

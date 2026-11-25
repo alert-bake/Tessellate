@@ -160,9 +160,9 @@ class Tdd010InventoryAndPickupTest {
         dirtPositions.forEach { scene.world.setBlock(it, BlockType.DIRT) }
 
         // Place player away from dirt blocks at (21.5, 6.0, 24.5)
-        scene.player.posX = 21.5f
-        scene.player.posY = 6.0f
-        scene.player.posZ = 24.5f
+        scene.player.posX = 21.5
+        scene.player.posY = 6.0
+        scene.player.posZ = 24.5
         scene.player.updateBoundingBox()
 
         // Mine all 3 dirt blocks (dirt hardness = 0.5f)
@@ -185,20 +185,20 @@ class Tdd010InventoryAndPickupTest {
         assertEquals(0, scene.player.inventory.getTotalCount("tessellate:dirt"))
 
         // Walk player over drop #1, drop #2, drop #3 sequentially and verify count updates 1 -> 2 -> 3
-        scene.player.posX = 20.5f
-        scene.player.posZ = 20.5f
+        scene.player.posX = 20.5
+        scene.player.posZ = 20.5
         scene.update(1f / 60f)
         assertTrue(drops[0].isRemoved)
         assertEquals(1, scene.player.inventory.getSlot(0)?.count)
 
-        scene.player.posX = 22.5f
-        scene.player.posZ = 20.5f
+        scene.player.posX = 22.5
+        scene.player.posZ = 20.5
         scene.update(1f / 60f)
         assertTrue(drops[1].isRemoved)
         assertEquals(2, scene.player.inventory.getSlot(0)?.count)
 
-        scene.player.posX = 24.5f
-        scene.player.posZ = 20.5f
+        scene.player.posX = 24.5
+        scene.player.posZ = 20.5
         scene.update(1f / 60f)
         assertTrue(drops[2].isRemoved)
         assertEquals(3, scene.player.inventory.getSlot(0)?.count)
@@ -253,7 +253,7 @@ class Tdd010InventoryAndPickupTest {
 
         // Tapping jump button still triggers player jump cleanly
         val player = engine.worldScene.player
-        player.spawnAtSurface(engine.worldScene.world, 24.5f, 24.5f)
+        player.spawnAtSurface(engine.worldScene.world, 24.5, 24.5)
         assertTrue(player.isGrounded)
 
         val jumpRect = engine.uiRenderer.jumpButtonRect
@@ -261,7 +261,7 @@ class Tdd010InventoryAndPickupTest {
         assertTrue(engine.onTouchEvent(downJump))
         downJump.recycle()
 
-        assertTrue("Jump button must still make player jump", player.velY > 0f)
+        assertTrue("Jump button must still make player jump", player.velY > 0.0)
         assertFalse(player.isGrounded)
     }
 }

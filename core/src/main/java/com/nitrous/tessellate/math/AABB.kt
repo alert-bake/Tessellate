@@ -1,17 +1,17 @@
 package com.nitrous.tessellate.math
 
 /**
- * Axis-Aligned Bounding Box (AABB) for 3D voxel collision detection.
+ * Axis-Aligned Bounding Box (AABB) for 3D voxel collision detection using 64-bit Double precision.
  */
 data class AABB(
-    var minX: Float,
-    var minY: Float,
-    var minZ: Float,
-    var maxX: Float,
-    var maxY: Float,
-    var maxZ: Float
+    var minX: Double,
+    var minY: Double,
+    var minZ: Double,
+    var maxX: Double,
+    var maxY: Double,
+    var maxZ: Double
 ) {
-    fun set(minX: Float, minY: Float, minZ: Float, maxX: Float, maxY: Float, maxZ: Float) {
+    fun set(minX: Double, minY: Double, minZ: Double, maxX: Double, maxY: Double, maxZ: Double) {
         this.minX = minX
         this.minY = minY
         this.minZ = minZ
@@ -26,7 +26,7 @@ data class AABB(
                minZ < other.maxZ && maxZ > other.minZ
     }
 
-    fun contains(x: Float, y: Float, z: Float): Boolean {
+    fun contains(x: Double, y: Double, z: Double): Boolean {
         return x in minX..maxX && y in minY..maxY && z in minZ..maxZ
     }
 }

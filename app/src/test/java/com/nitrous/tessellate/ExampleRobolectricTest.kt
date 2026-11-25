@@ -154,19 +154,19 @@ class ExampleRobolectricTest {
         val world = World(chunksX = 2, chunksY = 2, chunksZ = 2)
         val player = Player()
 
-        player.spawnAtSurface(world, 10.5f, 10.5f)
+        player.spawnAtSurface(world, 10.5, 10.5)
         assertTrue(player.isGrounded)
-        assertTrue(player.posY > 5f)
+        assertTrue(player.posY > 5.0)
 
         // Teleport player 5 blocks into the air
-        player.posY += 5.0f
+        player.posY += 5.0
         val startAirY = player.posY
 
         // Simulate 1 tick of falling
         player.update(deltaTime = 0.05f, world = world, moveForward = 0f, moveStrafe = 0f, crouchInput = false)
         assertFalse("Player in air must not be grounded", player.isGrounded)
         assertTrue("Player must fall under gravity", player.posY < startAirY)
-        assertTrue("Player vertical velocity must be downward", player.velY < 0f)
+        assertTrue("Player vertical velocity must be downward", player.velY < 0.0)
 
         // Simulate enough ticks to hit ground
         for (i in 0 until 50) {
@@ -189,7 +189,7 @@ class ExampleRobolectricTest {
             }
         }
 
-        val player = Player(posX = 10.0f, posY = 4.0f, posZ = 10.0f)
+        val player = Player(posX = 10.0, posY = 4.0, posZ = 10.0)
         player.yaw = 0f // Facing -Z
         player.pitch = 0f
 
@@ -206,7 +206,7 @@ class ExampleRobolectricTest {
         // Diagonal Movement (moveForward = 1.0, moveStrafe = 1.0)
         player.update(deltaTime = 0.1f, world = world, moveForward = 1.0f, moveStrafe = 1.0f, crouchInput = false)
         val horizontalSpeed = kotlin.math.hypot(player.velX, player.velZ)
-        assertEquals("Diagonal speed must equal walk speed (normalized)", player.walkSpeed, horizontalSpeed, 0.05f)
+        assertEquals("Diagonal speed must equal walk speed (normalized)", player.walkSpeed, horizontalSpeed, 0.05)
     }
 
     @Test
@@ -228,7 +228,7 @@ class ExampleRobolectricTest {
             world.setBlock(x, 5, 7, BlockType.STONE)
         }
 
-        val player = Player(posX = 10.0f, posY = 4.0f, posZ = 8.5f)
+        val player = Player(posX = 10.0, posY = 4.0, posZ = 8.5)
         player.yaw = 0f // Facing -Z directly towards the stone wall
 
         // Walk forward into the wall for 20 frames
@@ -238,7 +238,7 @@ class ExampleRobolectricTest {
 
         // Wall is at z=7 (occupies [7..8]). Player radius is 0.3.
         // Player posZ must not enter the block (must be >= 8.30)
-        assertTrue("Player must be stopped by the solid wall", player.posZ >= 8.29f)
+        assertTrue("Player must be stopped by the solid wall", player.posZ >= 8.29)
     }
 
     @Test
@@ -254,16 +254,16 @@ class ExampleRobolectricTest {
             }
         }
 
-        val player = Player(posX = 10.0f, posY = 4.0f, posZ = 10.0f)
-        assertEquals(1.8f, player.currentHeight, 0.01f)
-        assertEquals(1.62f, player.currentEyeHeight, 0.01f)
+        val player = Player(posX = 10.0, posY = 4.0, posZ = 10.0)
+        assertEquals(1.8, player.currentHeight, 0.01)
+        assertEquals(1.62, player.currentEyeHeight, 0.01)
 
         // Crouch in open space
         player.update(deltaTime = 0.05f, world = world, moveForward = 1.0f, moveStrafe = 0f, crouchInput = true)
         assertTrue(player.isCrouching)
-        assertEquals(1.3f, player.currentHeight, 0.01f)
-        assertEquals(1.15f, player.currentEyeHeight, 0.01f)
-        assertEquals("Crouch speed must be 2.2 blocks/sec", player.crouchSpeed, kotlin.math.hypot(player.velX, player.velZ), 0.05f)
+        assertEquals(1.3, player.currentHeight, 0.01)
+        assertEquals(1.15, player.currentEyeHeight, 0.01)
+        assertEquals("Crouch speed must be 2.2 blocks/sec", player.crouchSpeed, kotlin.math.hypot(player.velX, player.velZ), 0.05)
 
         // Place a ceiling at y = 5.5 (blocks y=5) directly above player
         // Since player feet are at y=4, height is 1.3, top is at 5.3 (fits under ceiling at 5.5).
@@ -326,17 +326,17 @@ class ExampleRobolectricTest {
         camera.updateProjection(16f / 9f)
 
         // Set first-person view
-        camera.setFirstPersonView(posX = 12.0f, posY = 15.62f, posZ = 18.0f, playerPitch = 30f, playerYaw = 90f)
+        camera.setFirstPersonView(posX = 12.0, posY = 15.62, posZ = 18.0, playerPitch = 30f, playerYaw = 90f)
         assertTrue(camera.isFirstPerson)
-        assertEquals(12.0f, camera.eyeX, 0.01f)
-        assertEquals(15.62f, camera.eyeY, 0.01f)
-        assertEquals(18.0f, camera.eyeZ, 0.01f)
+        assertEquals(12.0, camera.eyeX, 0.01)
+        assertEquals(15.62, camera.eyeY, 0.01)
+        assertEquals(18.0, camera.eyeZ, 0.01)
 
         // Pitch clamp check
-        camera.setFirstPersonView(posX = 12f, posY = 15f, posZ = 18f, playerPitch = 120f, playerYaw = 0f)
+        camera.setFirstPersonView(posX = 12.0, posY = 15.0, posZ = 18.0, playerPitch = 120f, playerYaw = 0f)
         assertEquals(89f, camera.pitch, 0.01f)
 
-        camera.setFirstPersonView(posX = 12f, posY = 15f, posZ = 18f, playerPitch = -110f, playerYaw = 0f)
+        camera.setFirstPersonView(posX = 12.0, posY = 15.0, posZ = 18.0, playerPitch = -110f, playerYaw = 0f)
         assertEquals(-89f, camera.pitch, 0.01f)
     }
 

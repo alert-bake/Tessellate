@@ -68,7 +68,7 @@ class Tdd008PolishAndRenderingTest {
         engine.uiRenderer.onSurfaceChanged(1920, 1080)
 
         val scene = engine.worldScene
-        scene.player.spawnAtSurface(scene.world, 24.5f, 24.5f)
+        scene.player.spawnAtSurface(scene.world, 24.5, 24.5)
         val initialYaw = scene.player.yaw
         val initialPitch = scene.player.pitch
         val startY = scene.player.posY
@@ -82,7 +82,7 @@ class Tdd008PolishAndRenderingTest {
         assertTrue(engine.onTouchEvent(downJump))
         downJump.recycle()
 
-        assertTrue("Jump must set positive upward velocity", scene.player.velY > 0f)
+        assertTrue("Jump must set positive upward velocity", scene.player.velY > 0.0)
         assertFalse("Player must leave grounded state when jumping", scene.player.isGrounded)
 
         val moveJump = MotionEvent.obtain(t0, t0 + 16, MotionEvent.ACTION_MOVE, jumpRect.centerX() + 40f, jumpRect.centerY() - 40f, 0)
@@ -127,7 +127,7 @@ class Tdd008PolishAndRenderingTest {
     fun `touch input controller directly intercepts jump button before camera drag`() {
         val world = World(chunksX = 2, chunksY = 2, chunksZ = 2)
         val player = Player()
-        player.spawnAtSurface(world, 12.5f, 12.5f)
+        player.spawnAtSurface(world, 12.5, 12.5)
         val initialYaw = player.yaw
 
         val tc = TouchInputController()
@@ -138,7 +138,7 @@ class Tdd008PolishAndRenderingTest {
         assertTrue(tc.handleTouchEvent(jumpDown, player, isWorldMode = true))
         jumpDown.recycle()
 
-        assertTrue(player.velY > 0f)
+        assertTrue(player.velY > 0.0)
         assertNull(tc.lookPointerId)
 
         val jumpDrag = MotionEvent.obtain(now, now + 20, MotionEvent.ACTION_MOVE, tc.jumpButtonRect.centerX() + 50f, tc.jumpButtonRect.centerY(), 0)
@@ -311,14 +311,14 @@ class Tdd008PolishAndRenderingTest {
             world.setBlock(x, 5, 7, BlockType.GLASS)
         }
 
-        val player = Player(posX = 8.5f, posY = 4.0f, posZ = 9.0f)
+        val player = Player(posX = 8.5, posY = 4.0, posZ = 9.0)
         player.yaw = 0f // Facing -Z toward the glass wall
 
         repeat(20) {
             player.update(0.05f, world, moveForward = 1.0f, moveStrafe = 0f, crouchInput = false)
         }
 
-        assertTrue("Player must not walk through solid glass blocks", player.posZ >= 8.29f)
+        assertTrue("Player must not walk through solid glass blocks", player.posZ >= 8.29)
     }
 
     @Test

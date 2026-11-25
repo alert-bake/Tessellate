@@ -189,6 +189,9 @@ class EntityRenderer {
     fun prepareVisibleEntitiesGrouped(
         entities: List<Entity>,
         viewProjMatrix: FloatArray,
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0,
         resolveKey: (Entity) -> Int
     ): List<Entity> {
         visibleEntitiesScratch.clear()
@@ -199,7 +202,7 @@ class EntityRenderer {
         for (i in 0 until entities.size) {
             val entity = entities[i]
             if (entity.isRemoved) continue
-            if (!frustum.intersectsAabb(entity.boundingBox)) {
+            if (!frustum.intersectsRelativeAabb(entity.boundingBox, cameraX, cameraY, cameraZ)) {
                 culled++
                 continue
             }
@@ -235,7 +238,10 @@ class EntityRenderer {
         visibleEntities: List<Entity>,
         texturePipeline: ITexturePipeline?,
         world: World?,
-        useAtlasUvs: Boolean
+        useAtlasUvs: Boolean,
+        cameraX: Double = 0.0,
+        cameraY: Double = 0.0,
+        cameraZ: Double = 0.0
     ): Int {
         var totalInstances = 0
         val pipelineObj = texturePipeline as? TexturePipeline
@@ -246,10 +252,10 @@ class EntityRenderer {
             val layers = renderState?.renderLayerCount ?: 1
             ensureInstanceCapacity(totalInstances + layers)
 
-            val baseX = renderState?.centerX ?: ((entity.boundingBox.minX + entity.boundingBox.maxX) * 0.5f)
-            val baseY = (renderState?.centerY ?: ((entity.boundingBox.minY + entity.boundingBox.maxY) * 0.5f)) +
+            val baseX = renderState?.centerX ?: ((entity.boundingBox.minX + entity.boundingBox.maxX) * 0.5)
+            val baseY = (renderState?.centerY ?: ((entity.boundingBox.minY + entity.boundingBox.maxY) * 0.5)) +
                 (renderState?.bobOffsetY ?: 0f)
-            val baseZ = renderState?.centerZ ?: ((entity.boundingBox.minZ + entity.boundingBox.maxZ) * 0.5f)
+            val baseZ = renderState?.centerZ ?: ((entity.boundingBox.minZ + entity.boundingBox.maxZ) * 0.5)
             val scale = renderState?.scale ?: ItemDropEntity.WIDTH
             val yawFallback = renderState?.yawRadians ?: 0f
 
@@ -282,15 +288,22 @@ class EntityRenderer {
                 val yaw: Float
 
                 if (dropState != null) {
-                    dropState.writeLayerTransform(layer, layerPosRotScratch, 0)
+                    dropState.writeRelativeLayerTransform(
+                        layerIndex = layer,
+                        cameraX = cameraX,
+                        cameraY = cameraY,
+                        cameraZ = cameraZ,
+                        outPosRot = layerPosRotScratch,
+                        outOffset = 0
+                    )
                     ox = layerPosRotScratch[0]
                     oy = layerPosRotScratch[1]
                     oz = layerPosRotScratch[2]
                     yaw = layerPosRotScratch[3]
                 } else {
-                    ox = baseX
-                    oy = baseY
-                    oz = baseZ
+                    ox = (baseX - cameraX).toFloat()
+                    oy = (baseY - cameraY).toFloat()
+                    oz = (baseZ - cameraZ).toFloat()
                     yaw = yawFallback
                 }
 
@@ -364,7 +377,7 @@ class EntityRenderer {
         for (i in 0 until entities.size) {
             val entity = entities[i]
             if (entity.isRemoved) continue
-            if (!frustum.intersectsAabb(entity.boundingBox)) {
+            if (!frustum.intersectsRelativeAabb(entity.boundingBox, camera.eyeX, camera.eyeY, camera.eyeZ)) {
                 culled++
                 continue
             }
@@ -404,7 +417,10 @@ class EntityRenderer {
             visibleEntities = visibleEntitiesScratch,
             texturePipeline = texturePipeline,
             world = world,
-            useAtlasUvs = useAtlasSingleDraw
+            useAtlasUvs = useAtlasSingleDraw,
+            cameraX = camera.eyeX,
+            cameraY = camera.eyeY,
+            cameraZ = camera.eyeZ
         )
         if (totalInstances <= 0) return
 

@@ -50,8 +50,8 @@ class World private constructor(
     val chunksZ: Int,
     val isInfinite: Boolean,
     val saveStorage: WorldChunkStorage? = null,
-    private val initialCenterX: Float = 24.5f,
-    private val initialCenterZ: Float = 24.5f
+    private val initialCenterX: Double = 24.5,
+    private val initialCenterZ: Double = 24.5
 ) {
     /**
      * Creates an infinite procedural world configured by a player's [WorldSession] and optional save storage.
@@ -61,8 +61,8 @@ class World private constructor(
         renderDistance: Int = 4,
         heightChunks: Int = 8,
         saveStorage: WorldChunkStorage? = null,
-        initialCenterX: Float = 24.5f,
-        initialCenterZ: Float = 24.5f
+        initialCenterX: Double = 24.5,
+        initialCenterZ: Double = 24.5
     ) : this(
         session = session,
         seed = session.seed,
@@ -456,8 +456,8 @@ class World private constructor(
      */
     fun updateRenderDistance(
         newDistance: Int,
-        playerX: Float,
-        playerZ: Float,
+        playerX: Double,
+        playerZ: Double,
         meshPrebuilder: ChunkMeshPrebuilder? = null,
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default
     ): Job? {
@@ -533,8 +533,8 @@ class World private constructor(
      * on [Dispatchers.IO]) and loads or generates missing columns nearest-first on a background coroutine.
      */
     fun streamChunksAround(
-        playerX: Float,
-        playerZ: Float,
+        playerX: Double,
+        playerZ: Double,
         meshPrebuilder: ChunkMeshPrebuilder? = null,
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
         forceCheck: Boolean = false
@@ -832,42 +832,42 @@ class World private constructor(
      * Returns the hit block and the face normal that was struck.
      */
     fun raycast(
-        originX: Float, originY: Float, originZ: Float,
-        dirX: Float, dirY: Float, dirZ: Float,
-        maxDistance: Float = 25f
+        originX: Double, originY: Double, originZ: Double,
+        dirX: Double, dirY: Double, dirZ: Double,
+        maxDistance: Double = 25.0
     ): RaycastHit? {
-        if (dirX == 0f && dirY == 0f && dirZ == 0f) return null
+        if (dirX == 0.0 && dirY == 0.0 && dirZ == 0.0) return null
 
         var x = floor(originX).toInt()
         var y = floor(originY).toInt()
         var z = floor(originZ).toInt()
 
-        val stepX = if (dirX > 0f) 1 else if (dirX < 0f) -1 else 0
-        val stepY = if (dirY > 0f) 1 else if (dirY < 0f) -1 else 0
-        val stepZ = if (dirZ > 0f) 1 else if (dirZ < 0f) -1 else 0
+        val stepX = if (dirX > 0.0) 1 else if (dirX < 0.0) -1 else 0
+        val stepY = if (dirY > 0.0) 1 else if (dirY < 0.0) -1 else 0
+        val stepZ = if (dirZ > 0.0) 1 else if (dirZ < 0.0) -1 else 0
 
-        val tDeltaX = if (stepX != 0) kotlin.math.abs(1f / dirX) else Float.MAX_VALUE
-        val tDeltaY = if (stepY != 0) kotlin.math.abs(1f / dirY) else Float.MAX_VALUE
-        val tDeltaZ = if (stepZ != 0) kotlin.math.abs(1f / dirZ) else Float.MAX_VALUE
+        val tDeltaX = if (stepX != 0) abs(1.0 / dirX) else Double.MAX_VALUE
+        val tDeltaY = if (stepY != 0) abs(1.0 / dirY) else Double.MAX_VALUE
+        val tDeltaZ = if (stepZ != 0) abs(1.0 / dirZ) else Double.MAX_VALUE
 
         var tMaxX = when {
-            stepX > 0 -> (x + 1 - originX) * tDeltaX
-            stepX < 0 -> (originX - x) * tDeltaX
-            else -> Float.MAX_VALUE
+            stepX > 0 -> (x + 1.0 - originX) * tDeltaX
+            stepX < 0 -> (originX - x.toDouble()) * tDeltaX
+            else -> Double.MAX_VALUE
         }
         var tMaxY = when {
-            stepY > 0 -> (y + 1 - originY) * tDeltaY
-            stepY < 0 -> (originY - y) * tDeltaY
-            else -> Float.MAX_VALUE
+            stepY > 0 -> (y + 1.0 - originY) * tDeltaY
+            stepY < 0 -> (originY - y.toDouble()) * tDeltaY
+            else -> Double.MAX_VALUE
         }
         var tMaxZ = when {
-            stepZ > 0 -> (z + 1 - originZ) * tDeltaZ
-            stepZ < 0 -> (originZ - z) * tDeltaZ
-            else -> Float.MAX_VALUE
+            stepZ > 0 -> (z + 1.0 - originZ) * tDeltaZ
+            stepZ < 0 -> (originZ - z.toDouble()) * tDeltaZ
+            else -> Double.MAX_VALUE
         }
 
         var hitFace = Direction.UP
-        var distance = 0f
+        var distance = 0.0
 
         while (distance <= maxDistance) {
             val block = getBlock(x, y, z)
@@ -876,7 +876,7 @@ class World private constructor(
                     blockPos = BlockPos(x, y, z),
                     blockType = block,
                     face = hitFace,
-                    distance = distance
+                    distance = distance.toFloat()
                 )
             }
 
@@ -957,11 +957,11 @@ class World private constructor(
      */
     fun tickEntities(
         deltaTime: Float,
-        playerX: Float = Float.NaN,
-        playerZ: Float = Float.NaN,
-        activeRadiusBlocks: Float = DEFAULT_ENTITY_TICK_RADIUS_BLOCKS
+        playerX: Double = Double.NaN,
+        playerZ: Double = Double.NaN,
+        activeRadiusBlocks: Double = DEFAULT_ENTITY_TICK_RADIUS_BLOCKS
     ) {
-        val useDistanceCulling = playerX.isFinite() && playerZ.isFinite() && activeRadiusBlocks > 0f
+        val useDistanceCulling = playerX.isFinite() && playerZ.isFinite() && activeRadiusBlocks > 0.0
         val radiusSq = activeRadiusBlocks * activeRadiusBlocks
         var ticked = 0
         var sleeping = 0
@@ -1057,7 +1057,7 @@ class World private constructor(
         private val LOGGER: Logger = Logger.getLogger(World::class.java.name)
 
         /** Default distance culling radius for entity ticking: 4 chunks (64 blocks). */
-        const val DEFAULT_ENTITY_TICK_RADIUS_BLOCKS: Float = (4 * Chunk.SIZE).toFloat()
+        const val DEFAULT_ENTITY_TICK_RADIUS_BLOCKS: Double = (4 * Chunk.SIZE).toDouble()
 
         /** Upper bound on unconsumed off-thread CPU chunk meshes held in memory while paused/streaming. */
         const val MAX_PREBUILT_MESHES: Int = 48
@@ -1071,9 +1071,10 @@ class World private constructor(
 
         @Suppress("NOTHING_TO_INLINE")
         internal inline fun packChunkKey(cx: Int, cy: Int, cz: Int): Long {
-            return ((cx.toLong() and 0x3FFFFFFL) shl 38) or
-                ((cz.toLong() and 0x3FFFFFFL) shl 12) or
-                (cy.toLong() and 0xFFFL)
+            // 28 bits signed cx (+-134M chunks = +-2.14B blocks), 28 bits signed cz, 8 bits cy (0..255)
+            return ((cx.toLong() and 0xFFFFFFFL) shl 36) or
+                ((cz.toLong() and 0xFFFFFFFL) shl 8) or
+                (cy.toLong() and 0xFFL)
         }
     }
 }

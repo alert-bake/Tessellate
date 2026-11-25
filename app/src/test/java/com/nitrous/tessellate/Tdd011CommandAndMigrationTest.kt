@@ -147,9 +147,9 @@ class Tdd011CommandAndMigrationTest {
                 }
             }
         }
-        scene.player.posX = 20.5f
-        scene.player.posY = 6.0f
-        scene.player.posZ = 20.5f
+        scene.player.posX = 20.5
+        scene.player.posY = 6.0
+        scene.player.posZ = 20.5
         scene.player.yaw = 0f // Facing -Z
         scene.player.pitch = -35f
         scene.player.updateBoundingBox()
@@ -223,8 +223,8 @@ class Tdd011CommandAndMigrationTest {
         assertEquals(ItemRegistry.AIR, scene.selectedItem)
 
         // Re-aim at floor block (20, 5, 18) -> tapping world must NOT place any block!
-        scene.player.posX = 20.5f
-        scene.player.posZ = 20.5f
+        scene.player.posX = 20.5
+        scene.player.posZ = 20.5
         scene.player.updateBoundingBox()
         engine.camera.setFirstPersonView(
             scene.player.posX, scene.player.eyeY, scene.player.posZ, -42f, 0f
@@ -273,9 +273,9 @@ class Tdd011CommandAndMigrationTest {
 
         // Place an opaque stone block at eye level behind a glass block and place glass via placeBlockAtTarget
         scene.world.setBlock(6, 6, 6, BlockType.STONE)
-        scene.player.posX = 10.5f
-        scene.player.posY = 5.0f
-        scene.player.posZ = 6.5f
+        scene.player.posX = 10.5
+        scene.player.posY = 5.0
+        scene.player.posZ = 6.5
         scene.player.updateBoundingBox()
 
         engine.camera.setFirstPersonView(scene.player.posX, scene.player.eyeY, scene.player.posZ, 0f, -90f)
@@ -306,9 +306,9 @@ class Tdd011CommandAndMigrationTest {
         val scene = engine.worldScene
         scene.world.clearEntities()
 
-        scene.player.posX = 24.5f
-        scene.player.posY = 10.0f
-        scene.player.posZ = 24.5f
+        scene.player.posX = 24.5
+        scene.player.posY = 10.0
+        scene.player.posZ = 24.5
         scene.player.yaw = 0f
         scene.player.pitch = 0f
         engine.camera.setFirstPersonView(
@@ -325,8 +325,8 @@ class Tdd011CommandAndMigrationTest {
         val dy = spawned.position.y - scene.player.eyeY
         val dz = spawned.position.z - scene.player.posZ
         val dist = sqrt(dx * dx + dy * dy + dz * dz)
-        assertEquals(3.0f, dist, 0.05f)
-        assertEquals(21.5f, spawned.position.z, 0.05f)
+        assertEquals(3.0, dist, 0.05)
+        assertEquals(21.5, spawned.position.z, 0.05)
 
         // Unknown command / invalid item return clean errors
         assertFalse(engine.executeCommand("/unknown").success)

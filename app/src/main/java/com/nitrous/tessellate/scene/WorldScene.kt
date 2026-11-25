@@ -109,7 +109,7 @@ class WorldScene : IGameScene {
     private val pickupEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
     private val renderEntitiesScratch = ArrayList<com.nitrous.tessellate.entity.Entity>()
     private val viewProjScratch = com.nitrous.tessellate.math.Matrix4.create()
-    private val placementBoxScratch = AABB(0f, 0f, 0f, 0f, 0f, 0f)
+    private val placementBoxScratch = AABB(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     @Volatile
     var renderFrameIndex: Long = 0L
@@ -128,7 +128,7 @@ class WorldScene : IGameScene {
             // Only snap the player to default surface spawn before a world session starts;
             // on EGL context recovery during active play, preserve the player's current position.
             if (currentSession == null && !hasInitializedSpawn) {
-                player.spawnAtSurface(world, 24.5f, 24.5f)
+                player.spawnAtSurface(world, 24.5, 24.5)
                 hasInitializedSpawn = true
             }
             world.streamChunksAround(player.posX, player.posZ, resolveMeshPrebuilder())
@@ -180,7 +180,7 @@ class WorldScene : IGameScene {
         player.isFlying = false
         syncSelectedItemFromInventory()
 
-        player.spawnAtSurface(newWorld, 24.5f, 24.5f)
+        player.spawnAtSurface(newWorld, 24.5, 24.5)
         camera?.setFirstPersonView(player.posX, player.eyeY, player.posZ, player.pitch, player.yaw)
 
         worldRenderer.replaceWorld(newWorld)
@@ -235,9 +235,9 @@ class WorldScene : IGameScene {
         player.posZ = saveData.playerZ
         player.yaw = saveData.playerYaw
         player.pitch = saveData.playerPitch
-        player.velX = 0f
-        player.velY = 0f
-        player.velZ = 0f
+        player.velX = 0.0
+        player.velY = 0.0
+        player.velZ = 0.0
         player.isInstaMine = (saveData.gamemode == GameMode.CREATIVE)
         player.updateBoundingBox()
 
@@ -360,7 +360,7 @@ class WorldScene : IGameScene {
         )
 
         val horizSpeed = kotlin.math.sqrt(player.velX * player.velX + player.velZ * player.velZ)
-        val shouldBob = camera.viewBobbingEnabled && player.isGrounded && !player.isFlying && horizSpeed > 0.25f
+        val shouldBob = camera.viewBobbingEnabled && player.isGrounded && !player.isFlying && horizSpeed > 0.25
         if (shouldBob) {
             viewBobPhase += deltaTimeSeconds * 10.5f
             viewBobAmplitude = (viewBobAmplitude + deltaTimeSeconds * 6f).coerceAtMost(1f)
@@ -396,7 +396,11 @@ class WorldScene : IGameScene {
     fun vaporizeTargetedChunk(camera: Camera3D? = null): com.nitrous.tessellate.world.ChunkPos? {
         if (world.isDestroyed) return null
         val hit = currentTargetHit ?: camera?.let { cam ->
-            world.raycast(cam.eyeX, cam.eyeY, cam.eyeZ, cam.forwardX, cam.forwardY, cam.forwardZ, 64f)
+            world.raycast(
+                cam.eyeX, cam.eyeY, cam.eyeZ,
+                cam.forwardX.toDouble(), cam.forwardY.toDouble(), cam.forwardZ.toDouble(),
+                64.0
+            )
         }
         val targetPos = if (hit != null) {
             com.nitrous.tessellate.world.ChunkPos(
@@ -407,7 +411,7 @@ class WorldScene : IGameScene {
         } else {
             val px = kotlin.math.floor(player.posX).toInt() shr 4
             val pz = kotlin.math.floor(player.posZ).toInt() shr 4
-            var py = (kotlin.math.floor(player.posY - 0.1f).toInt() shr 4).coerceIn(0, world.chunksY - 1)
+            var py = (kotlin.math.floor(player.posY - 0.1).toInt() shr 4).coerceIn(0, world.chunksY - 1)
             while (py >= 0 && world.getChunk(px, py, pz)?.isEmpty != false) {
                 py--
             }
@@ -529,10 +533,10 @@ class WorldScene : IGameScene {
             originX = camera.eyeX,
             originY = camera.eyeY,
             originZ = camera.eyeZ,
-            dirX = camera.forwardX,
-            dirY = camera.forwardY,
-            dirZ = camera.forwardZ,
-            maxDistance = 6.0f // First-person reach distance
+            dirX = camera.forwardX.toDouble(),
+            dirY = camera.forwardY.toDouble(),
+            dirZ = camera.forwardZ.toDouble(),
+            maxDistance = 6.0 // First-person reach distance
         )
     }
 
@@ -585,7 +589,14 @@ class WorldScene : IGameScene {
 
         // Render wireframe AABB hitboxes when Show Hitboxes debug toggle is active
         if (worldRenderer.showHitboxes) {
-            worldRenderer.renderHitboxes(viewProjScratch, renderEntitiesScratch, player)
+            worldRenderer.renderHitboxes(
+                viewProjMatrix = viewProjScratch,
+                entities = renderEntitiesScratch,
+                player = player,
+                cameraX = camera.eyeX,
+                cameraY = camera.eyeY,
+                cameraZ = camera.eyeZ
+            )
         }
 
         // Render player first-person hand / held block in foreground depth layer shaded by lightIntended
@@ -663,15 +674,15 @@ class WorldScene : IGameScene {
         if (block == BlockType.AIR) return null
 
         val dropPos = Vec3(
-            x = pos.x + 0.5f,
-            y = pos.y + 0.25f,
-            z = pos.z + 0.5f
+            x = pos.x + 0.5,
+            y = pos.y + 0.25,
+            z = pos.z + 0.5
         )
         val drop = ItemDropEntity(
             position = dropPos,
             itemId = item.identifier.toCanonicalString()
         )
-        drop.velocity.y = 2.0f
+        drop.velocity.y = 2.0
         world.spawnEntity(drop)
         return drop
     }
@@ -750,8 +761,8 @@ class WorldScene : IGameScene {
 
         // 3. Reject placing inside the player's bounding box (using pre-allocated scratch AABB)
         placementBoxScratch.set(
-            targetPos.x.toFloat(), targetPos.y.toFloat(), targetPos.z.toFloat(),
-            targetPos.x + 1f, targetPos.y + 1f, targetPos.z + 1f
+            targetPos.x.toDouble(), targetPos.y.toDouble(), targetPos.z.toDouble(),
+            targetPos.x + 1.0, targetPos.y + 1.0, targetPos.z + 1.0
         )
         if (player.boundingBox.intersects(placementBoxScratch)) {
             return false
@@ -765,25 +776,25 @@ class WorldScene : IGameScene {
      * and ~5 blocks above the player's eye level for physics/rendering diagnostics.
      */
     fun spawnDebugItemDrop(camera: Camera3D? = null): ItemDropEntity {
-        val forwardX: Float
-        val forwardY: Float
-        val forwardZ: Float
+        val forwardX: Double
+        val forwardY: Double
+        val forwardZ: Double
         if (camera != null) {
-            forwardX = camera.forwardX
-            forwardY = camera.forwardY
-            forwardZ = camera.forwardZ
+            forwardX = camera.forwardX.toDouble()
+            forwardY = camera.forwardY.toDouble()
+            forwardZ = camera.forwardZ.toDouble()
         } else {
             val pitchRad = Math.toRadians(player.pitch.toDouble())
             val yawRad = Math.toRadians(player.yaw.toDouble())
-            forwardX = (sin(yawRad) * cos(pitchRad)).toFloat()
-            forwardY = sin(pitchRad).toFloat()
-            forwardZ = (-cos(yawRad) * cos(pitchRad)).toFloat()
+            forwardX = sin(yawRad) * cos(pitchRad)
+            forwardY = sin(pitchRad)
+            forwardZ = -cos(yawRad) * cos(pitchRad)
         }
 
         val spawnPos = Vec3(
-            x = player.posX + forwardX * 3.0f,
-            y = player.eyeY + forwardY * 3.0f + 5.0f,
-            z = player.posZ + forwardZ * 3.0f
+            x = player.posX + forwardX * 3.0,
+            y = player.eyeY + forwardY * 3.0 + 5.0,
+            z = player.posZ + forwardZ * 3.0
         )
         val drop = ItemDropEntity(spawnPos)
         world.spawnEntity(drop)
@@ -798,7 +809,7 @@ class WorldScene : IGameScene {
         cancelMining()
         world.clearEntities()
         world.generateTerrain()
-        player.spawnAtSurface(world, 24.5f, 24.5f)
+        player.spawnAtSurface(world, 24.5, 24.5)
         worldRenderer.markAllChunksDirty()
     }
 
@@ -819,8 +830,8 @@ class WorldScene : IGameScene {
         const val AUTOSAVE_INTERVAL_SECONDS: Float = 300f
 
         /** Horizontal/3D item drop fusion distance (1.5 blocks per TDD-022 / :core). */
-        const val ITEM_MERGE_RADIUS_BLOCKS: Float = ItemDropMerger.ITEM_MERGE_RADIUS_BLOCKS
-        const val ITEM_MERGE_RADIUS_SQ: Float = ItemDropMerger.ITEM_MERGE_RADIUS_SQ
+        const val ITEM_MERGE_RADIUS_BLOCKS: Double = ItemDropMerger.ITEM_MERGE_RADIUS_BLOCKS
+        const val ITEM_MERGE_RADIUS_SQ: Double = ItemDropMerger.ITEM_MERGE_RADIUS_SQ
 
         /** Maximum nearby candidate comparisons per entity per tick (NHPHP O(n^2) prevention). */
         const val MAX_MERGE_CHECKS_PER_ENTITY: Int = ItemDropMerger.MAX_MERGE_CHECKS_PER_ENTITY

@@ -52,26 +52,38 @@ class Tdd009FrustumAndAsyncTest {
         val camera = Camera3D(fovDegrees = 60f, nearPlane = 0.1f, farPlane = 100f)
         camera.updateProjection(16f / 9f)
         // Place at origin looking along -Z (yaw = 0, pitch = 0)
-        camera.setFirstPersonView(posX = 24f, posY = 16f, posZ = 24f, playerPitch = 0f, playerYaw = 0f)
+        camera.setFirstPersonView(posX = 24.0, posY = 16.0, posZ = 24.0, playerPitch = 0f, playerYaw = 0f)
 
         val frustum = Frustum()
         frustum.extractPlanes(camera.viewProjectionMatrix)
 
         // Box directly in front (-Z direction from z=24) -> visible
-        val inFront = AABB(20f, 12f, 4f, 28f, 20f, 12f)
-        assertTrue("Box ahead of camera must intersect frustum", frustum.intersectsAabb(inFront))
+        val inFront = AABB(20.0, 12.0, 4.0, 28.0, 20.0, 12.0)
+        assertTrue(
+            "Box ahead of camera must intersect frustum",
+            frustum.intersectsRelativeAabb(inFront, camera.eyeX, camera.eyeY, camera.eyeZ)
+        )
 
         // Box completely behind camera (+Z direction from z=24) -> culled
-        val behind = AABB(20f, 12f, 30f, 28f, 20f, 46f)
-        assertFalse("Box behind camera must be frustum-culled", frustum.intersectsAabb(behind))
+        val behind = AABB(20.0, 12.0, 30.0, 28.0, 20.0, 46.0)
+        assertFalse(
+            "Box behind camera must be frustum-culled",
+            frustum.intersectsRelativeAabb(behind, camera.eyeX, camera.eyeY, camera.eyeZ)
+        )
 
         // Box far outside left frustum plane -> culled
-        val farLeft = AABB(-100f, 12f, 4f, -80f, 20f, 12f)
-        assertFalse("Box far to the left must be frustum-culled", frustum.intersectsAabb(farLeft))
+        val farLeft = AABB(-100.0, 12.0, 4.0, -80.0, 20.0, 12.0)
+        assertFalse(
+            "Box far to the left must be frustum-culled",
+            frustum.intersectsRelativeAabb(farLeft, camera.eyeX, camera.eyeY, camera.eyeZ)
+        )
 
         // Box enclosing camera -> visible
-        val enclosing = AABB(16f, 0f, 16f, 32f, 32f, 32f)
-        assertTrue("Chunk enclosing the camera must remain visible", frustum.intersectsAabb(enclosing))
+        val enclosing = AABB(16.0, 0.0, 16.0, 32.0, 32.0, 32.0)
+        assertTrue(
+            "Chunk enclosing the camera must remain visible",
+            frustum.intersectsRelativeAabb(enclosing, camera.eyeX, camera.eyeY, camera.eyeZ)
+        )
     }
 
     @Test
@@ -82,13 +94,23 @@ class Tdd009FrustumAndAsyncTest {
         camera.updateProjection(16f / 9f)
 
         // Position at edge (x=24, z=44) looking straight toward -Z (into the world)
-        camera.setFirstPersonView(posX = 24f, posY = 16f, posZ = 44f, playerPitch = 0f, playerYaw = 0f)
-        val lookingForward = renderer.computeVisibleChunks(camera.viewProjectionMatrix)
+        camera.setFirstPersonView(posX = 24.0, posY = 16.0, posZ = 44.0, playerPitch = 0f, playerYaw = 0f)
+        val lookingForward = renderer.computeVisibleChunks(
+            camera.viewProjectionMatrix,
+            camera.eyeX,
+            camera.eyeY,
+            camera.eyeZ
+        )
         assertTrue("Looking into world should see chunks", lookingForward.isNotEmpty())
 
         // Rotate 180 degrees to face +Z (looking outward, away from z=[0..32] chunks!)
-        camera.setFirstPersonView(posX = 24f, posY = 16f, posZ = 44f, playerPitch = 0f, playerYaw = 180f)
-        val lookingAway = renderer.computeVisibleChunks(camera.viewProjectionMatrix)
+        camera.setFirstPersonView(posX = 24.0, posY = 16.0, posZ = 44.0, playerPitch = 0f, playerYaw = 180f)
+        val lookingAway = renderer.computeVisibleChunks(
+            camera.viewProjectionMatrix,
+            camera.eyeX,
+            camera.eyeY,
+            camera.eyeZ
+        )
 
         assertTrue("Some chunks behind camera must be culled", renderer.frustumCulledChunksCount > 0)
         assertTrue(

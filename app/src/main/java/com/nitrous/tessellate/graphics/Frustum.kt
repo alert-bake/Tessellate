@@ -50,10 +50,34 @@ class Frustum {
     }
 
     /**
-     * Returns true if [box] intersects or lies completely inside all 6 frustum planes.
+     * Returns true if [box] intersects or lies completely inside all 6 frustum planes
+     * (when frustum planes are in the same coordinate space as [box]).
      */
     fun intersectsAabb(box: AABB): Boolean {
-        return intersectsAabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)
+        return intersectsAabb(
+            box.minX.toFloat(), box.minY.toFloat(), box.minZ.toFloat(),
+            box.maxX.toFloat(), box.maxY.toFloat(), box.maxZ.toFloat()
+        )
+    }
+
+    /**
+     * Returns true if world-space [box] shifted by `(-cameraX, -cameraY, -cameraZ)` intersects
+     * the camera-relative frustum planes (extracted from a viewProjectionMatrix whose eye is `(0, 0, 0)`).
+     */
+    fun intersectsRelativeAabb(
+        box: AABB,
+        cameraX: Double,
+        cameraY: Double,
+        cameraZ: Double
+    ): Boolean {
+        return intersectsAabb(
+            (box.minX - cameraX).toFloat(),
+            (box.minY - cameraY).toFloat(),
+            (box.minZ - cameraZ).toFloat(),
+            (box.maxX - cameraX).toFloat(),
+            (box.maxY - cameraY).toFloat(),
+            (box.maxZ - cameraZ).toFloat()
+        )
     }
 
     /**

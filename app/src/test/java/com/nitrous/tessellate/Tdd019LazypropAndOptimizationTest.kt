@@ -318,7 +318,7 @@ class Tdd019LazypropAndOptimizationTest {
         val camera = Camera3D(fovDegrees = 65f, nearPlane = 0.1f, farPlane = 200f)
         camera.updateProjection(16f / 9f)
         // Stand at x=4 looking toward +X (chunks cx=0,1,2,3 all ahead)
-        camera.setFirstPersonView(posX = 4f, posY = 12f, posZ = 8f, playerPitch = 0f, playerYaw = 90f)
+        camera.setFirstPersonView(posX = 4.0, posY = 12.0, posZ = 8.0, playerPitch = 0f, playerYaw = 90f)
 
         val visible = renderer.computeVisibleChunks(
             viewProjectionMatrix = camera.viewProjectionMatrix,
@@ -334,7 +334,7 @@ class Tdd019LazypropAndOptimizationTest {
         for (i in 1 until visible.size) {
             assertTrue(
                 "Visible chunks must be sorted front-to-back (${visible[i - 1].sortDistSq} <= ${visible[i].sortDistSq})",
-                visible[i - 1].sortDistSq <= visible[i].sortDistSq + 1e-4f
+                visible[i - 1].sortDistSq <= visible[i].sortDistSq + 1e-4
             )
         }
     }
@@ -345,16 +345,19 @@ class Tdd019LazypropAndOptimizationTest {
         val renderer = EntityRenderer()
         val camera = Camera3D(fovDegrees = 60f, nearPlane = 0.1f, farPlane = 120f)
         camera.updateProjection(16f / 9f)
-        camera.setFirstPersonView(posX = 0f, posY = 5f, posZ = 10f, playerPitch = 0f, playerYaw = 0f) // looking -Z
+        camera.setFirstPersonView(posX = 0.0, posY = 5.0, posZ = 10.0, playerPitch = 0f, playerYaw = 0f) // looking -Z
 
-        val stoneA = ItemDropEntity(Vec3(0f, 5f, 0f), itemId = "tessellate:stone")
-        val glass = ItemDropEntity(Vec3(1f, 5f, 0f), itemId = "tessellate:glass")
-        val stoneB = ItemDropEntity(Vec3(-1f, 5f, 0f), itemId = "tessellate:stone")
-        val behindCamera = ItemDropEntity(Vec3(0f, 5f, 35f), itemId = "tessellate:dirt")
+        val stoneA = ItemDropEntity(Vec3(0.0, 5.0, 0.0), itemId = "tessellate:stone")
+        val glass = ItemDropEntity(Vec3(1.0, 5.0, 0.0), itemId = "tessellate:glass")
+        val stoneB = ItemDropEntity(Vec3(-1.0, 5.0, 0.0), itemId = "tessellate:stone")
+        val behindCamera = ItemDropEntity(Vec3(0.0, 5.0, 35.0), itemId = "tessellate:dirt")
 
         val sorted = renderer.prepareVisibleEntitiesGrouped(
             entities = listOf(stoneA, glass, stoneB, behindCamera),
-            viewProjMatrix = camera.viewProjectionMatrix
+            viewProjMatrix = camera.viewProjectionMatrix,
+            cameraX = camera.eyeX,
+            cameraY = camera.eyeY,
+            cameraZ = camera.eyeZ
         ) { entity ->
             when ((entity as ItemDropEntity).itemId) {
                 "tessellate:stone" -> 10
@@ -379,7 +382,7 @@ class Tdd019LazypropAndOptimizationTest {
         // 2. checkItemPickups skips sleeping items even if player position overlaps
         val scene = WorldScene()
         scene.startSession(WorldSession(name = "SleepPickup", gamemode = GameMode.SURVIVAL, worldType = WorldType.FLAT, seed = 1L))
-        val sleepingDrop = ItemDropEntity(Vec3(scene.player.posX, scene.player.posY + 0.5f, scene.player.posZ), "tessellate:stone")
+        val sleepingDrop = ItemDropEntity(Vec3(scene.player.posX, scene.player.posY + 0.5, scene.player.posZ), "tessellate:stone")
         sleepingDrop.isSleeping = true
         scene.world.spawnEntity(sleepingDrop)
         scene.checkItemPickups()

@@ -9,7 +9,7 @@ import com.nitrous.tessellate.world.World
  *
  * Physics contract:
  * - [deltaTime] is expressed in **seconds**.
- * - [GRAVITY] is expressed in **world-units (blocks) per second squared** (24.0f units/s^2,
+ * - [GRAVITY] is expressed in **world-units (blocks) per second squared** (24.0 units/s^2,
  *   matching Player's continuous downward acceleration).
  * - [boundingBox] is cached and refreshed once per active tick (never recomputed on read),
  *   and ticks are skipped when [isSleeping] is true outside the player's active radius.
@@ -18,7 +18,7 @@ abstract class Entity(
     var position: Vec3,
     val boundingBox: AABB
 ) {
-    val velocity = Vec3(0f, 0f, 0f)
+    val velocity = Vec3(0.0, 0.0, 0.0)
     var isRemoved = false
 
     /** True while entity is outside the active tick radius and skipped by [World.tickEntities]. */
@@ -54,13 +54,14 @@ abstract class Entity(
      */
     open fun tick(world: World, deltaTime: Float) {
         if (isRemoved || deltaTime <= 0f) return
+        val dt = deltaTime.toDouble()
 
         // Gravity is expressed in world-units per second squared.
-        velocity.y -= GRAVITY * deltaTime
+        velocity.y -= GRAVITY * dt
 
-        position.x += velocity.x * deltaTime
-        position.y += velocity.y * deltaTime
-        position.z += velocity.z * deltaTime
+        position.x += velocity.x * dt
+        position.y += velocity.y * dt
+        position.z += velocity.z * dt
 
         tickCount++
         refreshBoundingBox()
@@ -75,6 +76,6 @@ abstract class Entity(
 
     companion object {
         /** Downward gravitational acceleration in world-units (blocks) per second squared. */
-        const val GRAVITY: Float = 24.0f
+        const val GRAVITY: Double = 24.0
     }
 }

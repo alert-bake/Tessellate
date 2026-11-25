@@ -180,6 +180,8 @@ class TessellateEngine(
             worldScene.worldRenderer.useNativeMemoryPooling = sanitized.useNativeMemoryPooling
             worldScene.worldRenderer.parallelMeshingEnabled = sanitized.parallelChunkMeshing
             worldScene.profiler.enabled = sanitized.enableNanoTimeProfiler
+            texturePipeline.mipmappingEnabled = sanitized.mipmapping
+            texturePipeline.anisotropicFilteringEnabled = sanitized.anisotropicFiltering
 
             if (!worldScene.world.isDestroyed && worldScene.world.isInfinite &&
                 worldScene.world.renderDistance != sanitized.renderDistance
@@ -485,7 +487,7 @@ class TessellateEngine(
                 SceneMode.SHOWCASE -> {
                     camera.minDistance = 1.2f
                     camera.maxDistance = 25f
-                    camera.setTarget(0f, 0f, 0f, dist = 4.2f, p = 28f, y = 45f)
+                    camera.setTarget(0.0, 0.0, 0.0, dist = 4.2f, p = 28f, y = 45f)
                 }
             }
             currentSceneMode = newMode

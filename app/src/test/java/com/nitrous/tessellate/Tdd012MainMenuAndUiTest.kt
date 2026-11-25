@@ -145,13 +145,13 @@ class Tdd012MainMenuAndUiTest {
         engine.onSurfaceChanged(1920, 1080)
 
         // World entities must NOT tick while in MENU or SETTINGS
-        val drop = ItemDropEntity(Vec3(10.5f, 20.0f, 10.5f))
+        val drop = ItemDropEntity(Vec3(10.5, 20.0, 10.5))
         engine.worldScene.world.spawnEntity(drop)
         val startY = drop.position.y
 
         // Simulate frames while in MENU
         engine.onDrawFrame()
-        assertEquals(startY, drop.position.y, 1e-4f)
+        assertEquals(startY, drop.position.y, 1e-4)
 
         // Tap top-left (where red debug box used to be) and top-right old Orbit/Reset areas in PLAYING
         engine.setAppState(AppState.PLAYING)

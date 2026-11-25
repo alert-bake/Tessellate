@@ -101,8 +101,8 @@ class Tdd013AtomicLasagnaTest {
             assertTrue("Surface Y=$surfaceY must be in 40..80", surfaceY in 40..80)
 
             val player = Player()
-            player.spawnAtSurface(world, 24.5f, 24.5f)
-            assertTrue("Player must spawn atop terrain hill/tree >= 40", player.posY >= 40f)
+            player.spawnAtSurface(world, 24.5, 24.5)
+            assertTrue("Player must spawn atop terrain hill/tree >= 40", player.posY >= 40.0)
 
             var foundGrass = false
             var foundDirt = false
@@ -191,8 +191,8 @@ class Tdd013AtomicLasagnaTest {
 
         try {
             val initialJob = world.streamChunksAround(
-                playerX = 24.5f,
-                playerZ = 24.5f,
+                playerX = 24.5,
+                playerZ = 24.5,
                 meshPrebuilder = pipeline,
                 ioDispatcher = Dispatchers.Default,
                 forceCheck = true
@@ -205,10 +205,10 @@ class Tdd013AtomicLasagnaTest {
             renderer.updateMeshes(pipeline, uploadToGpu = false)
             assertEquals(world.getLoadedChunkCount(), renderer.getChunkMeshes().size)
 
-            val player = Player(posX = 400.5f, posY = 90f, posZ = -200.5f)
+            val player = Player(posX = 400.5, posY = 90.0, posZ = -200.5)
             player.update(deltaTime = 0.05f, world = world, moveForward = 1f, moveStrafe = 0f, crouchInput = false)
-            assertTrue("Infinite world must NOT clamp player posX to 48", player.posX > 395f)
-            assertTrue("Infinite world must NOT clamp player posZ to >= 0", player.posZ < -195f)
+            assertTrue("Infinite world must NOT clamp player posX to 48", player.posX > 395.0)
+            assertTrue("Infinite world must NOT clamp player posZ to >= 0", player.posZ < -195.0)
 
             val moveJob = world.streamChunksAround(
                 playerX = player.posX,
@@ -258,9 +258,9 @@ class Tdd013AtomicLasagnaTest {
 
             val tapStonePos = BlockPos(24, 65, 21)
             scene.world.setBlock(tapStonePos, BlockType.STONE)
-            scene.player.posX = 24.5f
-            scene.player.posY = 64.0f
-            scene.player.posZ = 24.5f
+            scene.player.posX = 24.5
+            scene.player.posY = 64.0
+            scene.player.posZ = 24.5
             scene.player.yaw = 0f
             scene.player.pitch = 0f
             engine.camera.setFirstPersonView(scene.player.posX, scene.player.eyeY, scene.player.posZ, 0f, 0f)

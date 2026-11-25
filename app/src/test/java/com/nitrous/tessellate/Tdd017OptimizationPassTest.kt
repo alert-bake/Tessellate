@@ -100,8 +100,13 @@ class Tdd017OptimizationPassTest {
         camera.updateProjection(16f / 9f)
 
         // Look outward toward +Z from z=44: chunks behind (chunkZ == 0, z in 0..16) must be culled
-        camera.setFirstPersonView(posX = 24f, posY = 16f, posZ = 44f, playerPitch = 0f, playerYaw = 180f)
-        val visible = renderer.computeVisibleChunks(camera.viewProjectionMatrix)
+        camera.setFirstPersonView(posX = 24.0, posY = 16.0, posZ = 44.0, playerPitch = 0f, playerYaw = 180f)
+        val visible = renderer.computeVisibleChunks(
+            camera.viewProjectionMatrix,
+            camera.eyeX,
+            camera.eyeY,
+            camera.eyeZ
+        )
 
         assertTrue("Frustum culling must skip behind-camera chunks", renderer.frustumCulledChunksCount > 0)
         assertFalse(
@@ -124,13 +129,13 @@ class Tdd017OptimizationPassTest {
             }
         }
 
-        val drop = ItemDropEntity(Vec3(8.5f, 8.0f, 8.5f))
+        val drop = ItemDropEntity(Vec3(8.5, 8.0, 8.5))
         val initialAabbUpdates = drop.aabbUpdateCount
         assertEquals(1, initialAabbUpdates)
         world.spawnEntity(drop)
 
         // 1. Tick within active radius (< 64 blocks) with large dt triggering multiple substeps
-        world.tickEntities(deltaTime = 0.15f, playerX = 12f, playerZ = 8.5f)
+        world.tickEntities(deltaTime = 0.15f, playerX = 12.0, playerZ = 8.5)
         assertFalse("Entity within 4 chunks must stay awake", drop.isSleeping)
         assertEquals(1, drop.tickCount)
         assertEquals(
@@ -147,17 +152,17 @@ class Tdd017OptimizationPassTest {
         val posYBeforeSleep = drop.position.y
 
         repeat(5) {
-            world.tickEntities(deltaTime = 0.05f, playerX = 88.5f, playerZ = 8.5f)
+            world.tickEntities(deltaTime = 0.05f, playerX = 88.5, playerZ = 8.5)
         }
         assertTrue("Entity beyond 4 chunks must be asleep", drop.isSleeping)
         assertEquals("Sleeping entity tickCount must not advance", ticksBeforeSleep, drop.tickCount)
         assertEquals("Sleeping entity AABB must not update", aabbsBeforeSleep, drop.aabbUpdateCount)
-        assertEquals("Sleeping entity position must not move", posYBeforeSleep, drop.position.y, 1e-5f)
+        assertEquals("Sleeping entity position must not move", posYBeforeSleep, drop.position.y, 1e-5)
         assertEquals(0, world.lastTickedEntitiesCount)
         assertEquals(1, world.lastSleepingEntitiesCount)
 
         // 3. Walk back within 4 chunks -> entity wakes up cleanly
-        world.tickEntities(deltaTime = 0.05f, playerX = 20f, playerZ = 8.5f)
+        world.tickEntities(deltaTime = 0.05f, playerX = 20.0, playerZ = 8.5)
         assertFalse("Returning near entity must wake it up", drop.isSleeping)
         assertEquals(ticksBeforeSleep + 1, drop.tickCount)
         assertEquals(aabbsBeforeSleep + 1, drop.aabbUpdateCount)
@@ -280,7 +285,7 @@ class Tdd017OptimizationPassTest {
 
         // Acceptance Test 2: Place a block cleanly -> only target chunk (plus edge neighbor if on border) marks dirty and rebuilds
         val px = scene.player.posX.toInt()
-        val py = (scene.player.posY - 1f).toInt().coerceAtLeast(1)
+        val py = (scene.player.posY - 1.0).toInt().coerceAtLeast(1)
         val pz = scene.player.posZ.toInt() + 3
         val baseHit = RaycastHit(
             blockPos = BlockPos(px, py, pz),
@@ -296,7 +301,7 @@ class Tdd017OptimizationPassTest {
         assertEquals(0, scene.worldRenderer.getChunkMeshes().count { it.chunk.needsMeshRebuild })
 
         // Acceptance Test 3: Spawn item drop nearby (outside pickup range), walk > 4 chunks away, check profiler shows 0 ticked & 1 asleep
-        val drop = ItemDropEntity(Vec3(scene.player.posX + 5f, scene.player.posY + 1f, scene.player.posZ))
+        val drop = ItemDropEntity(Vec3(scene.player.posX + 5.0, scene.player.posY + 1.0, scene.player.posZ))
         scene.world.spawnEntity(drop)
 
         scene.update(0.016f)
@@ -305,7 +310,7 @@ class Tdd017OptimizationPassTest {
         assertEquals(0, scene.profiler.sleepingEntitiesCount)
 
         // Move player > 64 blocks away along X
-        scene.player.posX += 80f
+        scene.player.posX += 80.0
         scene.player.updateBoundingBox()
 
         ShadowLog.clear()

@@ -34,23 +34,23 @@ class EntityAndItemDropTest {
 
     @Test
     fun `vec3 supports basic position and velocity math operations`() {
-        val pos = Vec3(1f, 2f, 3f)
-        val vel = Vec3(0f, -4f, 2f)
+        val pos = Vec3(1.0, 2.0, 3.0)
+        val vel = Vec3(0.0, -4.0, 2.0)
 
-        val next = pos + vel * 0.5f
-        assertEquals(1f, next.x, 1e-4f)
-        assertEquals(0f, next.y, 1e-4f)
-        assertEquals(4f, next.z, 1e-4f)
+        val next = pos + vel * 0.5
+        assertEquals(1.0, next.x, 1e-4)
+        assertEquals(0.0, next.y, 1e-4)
+        assertEquals(4.0, next.z, 1e-4)
 
         val delta = next - pos
-        assertEquals(0f, delta.x, 1e-4f)
-        assertEquals(-2f, delta.y, 1e-4f)
-        assertEquals(1f, delta.z, 1e-4f)
+        assertEquals(0.0, delta.x, 1e-4)
+        assertEquals(-2.0, delta.y, 1e-4)
+        assertEquals(1.0, delta.z, 1e-4)
 
-        pos.addLocal(vel * 0.25f)
-        assertEquals(1f, pos.x, 1e-4f)
-        assertEquals(1f, pos.y, 1e-4f)
-        assertEquals(3.5f, pos.z, 1e-4f)
+        pos.addLocal(vel * 0.25)
+        assertEquals(1.0, pos.x, 1e-4)
+        assertEquals(1.0, pos.y, 1e-4)
+        assertEquals(3.5, pos.z, 1e-4)
     }
 
     // =========================================================================
@@ -60,12 +60,12 @@ class EntityAndItemDropTest {
     @Test
     fun `base entity applies time-scaled gravity in seconds and updates subclass bounding box`() {
         val world = clearColumnWorld()
-        val halfW = 0.5f
-        val height = 1.5f
+        val halfW = 0.5
+        val height = 1.5
 
         val customEntity = object : Entity(
-            position = Vec3(10.5f, 12.0f, 10.5f),
-            boundingBox = AABB(10.5f - halfW, 12.0f, 10.5f - halfW, 10.5f + halfW, 12.0f + height, 10.5f + halfW)
+            position = Vec3(10.5, 12.0, 10.5),
+            boundingBox = AABB(10.5 - halfW, 12.0, 10.5 - halfW, 10.5 + halfW, 12.0 + height, 10.5 + halfW)
         ) {
             override fun updateBoundingBox() {
                 boundingBox.set(
@@ -82,17 +82,17 @@ class EntityAndItemDropTest {
         val dt = 0.25f
         customEntity.tick(world, dt)
 
-        val expectedVy = -Entity.GRAVITY * dt
-        val expectedY = 12.0f + expectedVy * dt
-        assertEquals(expectedVy, customEntity.velocity.y, 1e-4f)
-        assertEquals(expectedY, customEntity.position.y, 1e-4f)
+        val expectedVy = -Entity.GRAVITY * dt.toDouble()
+        val expectedY = 12.0 + expectedVy * dt.toDouble()
+        assertEquals(expectedVy, customEntity.velocity.y, 1e-4)
+        assertEquals(expectedY, customEntity.position.y, 1e-4)
 
         // Verify subclass owns its custom 1.0 x 1.5 x 1.0 dimensions
-        assertEquals(1.0f, customEntity.boundingBox.maxX - customEntity.boundingBox.minX, 1e-4f)
-        assertEquals(1.5f, customEntity.boundingBox.maxY - customEntity.boundingBox.minY, 1e-4f)
-        assertEquals(1.0f, customEntity.boundingBox.maxZ - customEntity.boundingBox.minZ, 1e-4f)
-        assertEquals(expectedY, customEntity.boundingBox.minY, 1e-4f)
-        assertEquals(expectedY + 1.5f, customEntity.boundingBox.maxY, 1e-4f)
+        assertEquals(1.0, customEntity.boundingBox.maxX - customEntity.boundingBox.minX, 1e-4)
+        assertEquals(1.5, customEntity.boundingBox.maxY - customEntity.boundingBox.minY, 1e-4)
+        assertEquals(1.0, customEntity.boundingBox.maxZ - customEntity.boundingBox.minZ, 1e-4)
+        assertEquals(expectedY, customEntity.boundingBox.minY, 1e-4)
+        assertEquals(expectedY + 1.5, customEntity.boundingBox.maxY, 1e-4)
     }
 
     // =========================================================================
@@ -101,26 +101,26 @@ class EntityAndItemDropTest {
 
     @Test
     fun `item drop entity has 0_25 cube hitbox centered horizontally and resting on position y`() {
-        val drop = ItemDropEntity(Vec3(5.0f, 10.0f, 7.0f))
+        val drop = ItemDropEntity(Vec3(5.0, 10.0, 7.0))
 
-        assertEquals(0.25f, drop.boundingBox.maxX - drop.boundingBox.minX, 1e-4f)
-        assertEquals(0.25f, drop.boundingBox.maxY - drop.boundingBox.minY, 1e-4f)
-        assertEquals(0.25f, drop.boundingBox.maxZ - drop.boundingBox.minZ, 1e-4f)
-        assertEquals(4.875f, drop.boundingBox.minX, 1e-4f)
-        assertEquals(5.125f, drop.boundingBox.maxX, 1e-4f)
-        assertEquals(10.0f, drop.boundingBox.minY, 1e-4f)
-        assertEquals(10.25f, drop.boundingBox.maxY, 1e-4f)
-        assertEquals(6.875f, drop.boundingBox.minZ, 1e-4f)
-        assertEquals(7.125f, drop.boundingBox.maxZ, 1e-4f)
+        assertEquals(0.25, drop.boundingBox.maxX - drop.boundingBox.minX, 1e-4)
+        assertEquals(0.25, drop.boundingBox.maxY - drop.boundingBox.minY, 1e-4)
+        assertEquals(0.25, drop.boundingBox.maxZ - drop.boundingBox.minZ, 1e-4)
+        assertEquals(4.875, drop.boundingBox.minX, 1e-4)
+        assertEquals(5.125, drop.boundingBox.maxX, 1e-4)
+        assertEquals(10.0, drop.boundingBox.minY, 1e-4)
+        assertEquals(10.25, drop.boundingBox.maxY, 1e-4)
+        assertEquals(6.875, drop.boundingBox.minZ, 1e-4)
+        assertEquals(7.125, drop.boundingBox.maxZ, 1e-4)
     }
 
     @Test
     fun `item drop collides cleanly with solid block below and snaps to block top`() {
         val world = clearColumnWorld()
-        // Solid 1-block floor at (10, 5, 10) -> top surface at Y = 6.0f
+        // Solid 1-block floor at (10, 5, 10) -> top surface at Y = 6.0
         world.setBlock(10, 5, 10, BlockType.STONE)
 
-        val drop = ItemDropEntity(Vec3(10.5f, 8.0f, 10.5f))
+        val drop = ItemDropEntity(Vec3(10.5, 8.0, 10.5))
         world.spawnEntity(drop)
 
         // Simulate 60Hz ticks for 1.5 seconds
@@ -128,23 +128,23 @@ class EntityAndItemDropTest {
             world.tickEntities(1f / 60f)
         }
 
-        assertEquals(6.0f, drop.position.y, 1e-4f)
-        assertEquals(0f, drop.velocity.y, 1e-4f)
-        assertEquals(6.0f, drop.boundingBox.minY, 1e-4f)
-        assertEquals(6.25f, drop.boundingBox.maxY, 1e-4f)
+        assertEquals(6.0, drop.position.y, 1e-4)
+        assertEquals(0.0, drop.velocity.y, 1e-4)
+        assertEquals(6.0, drop.boundingBox.minY, 1e-4)
+        assertEquals(6.25, drop.boundingBox.maxY, 1e-4)
     }
 
     @Test
     fun `item drop does not tunnel through 1-block thick floor under large timestep`() {
         val world = clearColumnWorld()
-        world.setBlock(12, 10, 12, BlockType.GRASS) // Top is Y = 11.0f
+        world.setBlock(12, 10, 12, BlockType.GRASS) // Top is Y = 11.0
 
-        val drop = ItemDropEntity(Vec3(12.5f, 15.0f, 12.5f))
+        val drop = ItemDropEntity(Vec3(12.5, 15.0, 12.5))
         // Large single timestep where unconstrained fall exceeds 1 block
         drop.tick(world, 1.0f)
 
-        assertEquals(11.0f, drop.position.y, 1e-4f)
-        assertEquals(0f, drop.velocity.y, 1e-4f)
+        assertEquals(11.0, drop.position.y, 1e-4)
+        assertEquals(0.0, drop.velocity.y, 1e-4)
     }
 
     @Test
@@ -155,7 +155,7 @@ class EntityAndItemDropTest {
         world.setBlock(8, 1, 8, BlockType.DIRT)
 
         // Subclass treats STONE as non-solid (only DIRT is solid) to verify isBlockSolid rule
-        val passThroughDrop = object : ItemDropEntity(Vec3(8.5f, 7.0f, 8.5f)) {
+        val passThroughDrop = object : ItemDropEntity(Vec3(8.5, 7.0, 8.5)) {
             override fun isBlockSolid(block: BlockType): Boolean {
                 return block != BlockType.AIR && block != BlockType.STONE
             }
@@ -166,8 +166,8 @@ class EntityAndItemDropTest {
         }
 
         // Should have passed cleanly through AIR and non-solid STONE (Y=5) and landed on DIRT (top Y=2.0)
-        assertEquals(2.0f, passThroughDrop.position.y, 1e-4f)
-        assertEquals(0f, passThroughDrop.velocity.y, 1e-4f)
+        assertEquals(2.0, passThroughDrop.position.y, 1e-4)
+        assertEquals(0.0, passThroughDrop.velocity.y, 1e-4)
     }
 
     // =========================================================================
@@ -180,13 +180,13 @@ class EntityAndItemDropTest {
         world.setBlock(15, 2, 15, BlockType.STONE)
 
         lateinit var selfRemoving: Entity
-        selfRemoving = object : ItemDropEntity(Vec3(15.5f, 10.0f, 15.5f)) {
+        selfRemoving = object : ItemDropEntity(Vec3(15.5, 10.0, 15.5)) {
             override fun tick(world: World, deltaTime: Float) {
                 super.tick(world, deltaTime)
                 world.removeEntity(this)
             }
         }
-        val survivor = ItemDropEntity(Vec3(15.5f, 10.0f, 15.5f))
+        val survivor = ItemDropEntity(Vec3(15.5, 10.0, 15.5))
 
         world.spawnEntity(selfRemoving)
         world.spawnEntity(survivor)
@@ -203,14 +203,14 @@ class EntityAndItemDropTest {
     fun `spawning entity during tick defers its first tick until the next frame`() {
         val world = clearColumnWorld()
         var childTickCount = 0
-        val child = object : ItemDropEntity(Vec3(20.5f, 15.0f, 20.5f)) {
+        val child = object : ItemDropEntity(Vec3(20.5, 15.0, 20.5)) {
             override fun tick(world: World, deltaTime: Float) {
                 childTickCount++
                 super.tick(world, deltaTime)
             }
         }
 
-        val spawner = object : ItemDropEntity(Vec3(20.5f, 15.0f, 20.5f)) {
+        val spawner = object : ItemDropEntity(Vec3(20.5, 15.0, 20.5)) {
             var spawned = false
             override fun tick(world: World, deltaTime: Float) {
                 super.tick(world, deltaTime)
@@ -248,9 +248,9 @@ class EntityAndItemDropTest {
         engine.uiRenderer.onSurfaceChanged(1920, 1080)
 
         val scene = engine.worldScene
-        scene.player.posX = 24.5f
-        scene.player.posY = 18.0f
-        scene.player.posZ = 24.5f
+        scene.player.posX = 24.5
+        scene.player.posY = 18.0
+        scene.player.posZ = 24.5
         scene.player.yaw = 0f // Looking toward -Z
         scene.player.pitch = 0f
         engine.camera.setFirstPersonView(
@@ -267,9 +267,9 @@ class EntityAndItemDropTest {
         assertEquals(1, scene.world.entities.size)
         assertTrue(scene.world.entities.first() === drop)
         // Expected: ~3 blocks along -Z from (24.5, eyeY, 24.5), ~5 blocks up
-        assertEquals(24.5f, drop.position.x, 1e-3f)
-        assertEquals(scene.player.eyeY + 5.0f, drop.position.y, 1e-3f)
-        assertEquals(21.5f, drop.position.z, 1e-3f)
+        assertEquals(24.5, drop.position.x, 1e-3)
+        assertEquals(scene.player.eyeY + 5.0, drop.position.y, 1e-3)
+        assertEquals(21.5, drop.position.z, 1e-3)
     }
 
     private fun clearColumnWorld(): World {

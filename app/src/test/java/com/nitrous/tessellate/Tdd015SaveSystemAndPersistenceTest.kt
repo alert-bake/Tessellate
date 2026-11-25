@@ -83,17 +83,17 @@ class Tdd015SaveSystemAndPersistenceTest {
 
             // Drop a cobblestone item entity in chunk (1, 0, 1) -> world (22.5, 5.0, 22.5)
             val droppedItem = ItemDropEntity(
-                position = Vec3(22.5f, 5.0f, 22.5f),
+                position = Vec3(22.5, 5.0, 22.5),
                 itemId = "tessellate:cobblestone"
             ).apply {
-                velocity.set(0.5f, 1.25f, -0.25f)
+                velocity.set(0.5, 1.25, -0.25)
             }
             scene.world.spawnEntity(droppedItem)
 
             // Modify player position, look orientation, and hotbar inventory
-            scene.player.posX = 28.25f
-            scene.player.posY = 5.0f
-            scene.player.posZ = 27.75f
+            scene.player.posX = 28.25
+            scene.player.posY = 5.0
+            scene.player.posZ = 27.75
             scene.player.yaw = 132.5f
             scene.player.pitch = -18.0f
             scene.player.inventory.setSlot(0, ItemStack("tessellate:stone", 17))
@@ -130,9 +130,9 @@ class Tdd015SaveSystemAndPersistenceTest {
             val loadedScene = restartedEngine.worldScene
             // Verify placed block, dropped entity, inventory, and player transform restored
             assertEquals(BlockType.GLASS, loadedScene.world.getBlock(24, 5, 24))
-            assertEquals(28.25f, loadedScene.player.posX, 1e-4f)
-            assertEquals(5.0f, loadedScene.player.posY, 1e-4f)
-            assertEquals(27.75f, loadedScene.player.posZ, 1e-4f)
+            assertEquals(28.25, loadedScene.player.posX, 1e-4)
+            assertEquals(5.0, loadedScene.player.posY, 1e-4)
+            assertEquals(27.75, loadedScene.player.posZ, 1e-4)
             assertEquals(132.5f, loadedScene.player.yaw, 1e-4f)
             assertEquals(-18.0f, loadedScene.player.pitch, 1e-4f)
             assertEquals(4, loadedScene.player.inventory.selectedSlot)
@@ -145,10 +145,10 @@ class Tdd015SaveSystemAndPersistenceTest {
             assertEquals(1, restoredDrops.size)
             val restoredDrop = restoredDrops.first()
             assertEquals("tessellate:cobblestone", restoredDrop.itemId)
-            assertEquals(22.5f, restoredDrop.position.x, 1e-4f)
-            assertEquals(5.0f, restoredDrop.position.y, 1e-4f)
-            assertEquals(22.5f, restoredDrop.position.z, 1e-4f)
-            assertEquals(0.5f, restoredDrop.velocity.x, 1e-4f)
+            assertEquals(22.5, restoredDrop.position.x, 1e-4)
+            assertEquals(5.0, restoredDrop.position.y, 1e-4)
+            assertEquals(22.5, restoredDrop.position.z, 1e-4)
+            assertEquals(0.5, restoredDrop.velocity.x, 1e-4)
         } finally {
             restartedEngine.worldScene.destroySession()
         }
@@ -219,13 +219,13 @@ class Tdd015SaveSystemAndPersistenceTest {
             )
 
             // Spawn modded GasVolume entity at chunk (0, 1, 0) -> world (4.5, 20.0, 4.5)
-            val gas = GasVolumeEntity(Vec3(4.5f, 20.0f, 4.5f), gasAmount = 73.5f)
+            val gas = GasVolumeEntity(Vec3(4.5, 20.0, 4.5), gasAmount = 73.5f)
             world.spawnEntity(gas)
             // Place marker block in chunk (0, 1, 0) -> world (4, 20, 4)
             world.setBlock(4, 20, 4, BlockType.COBBLESTONE)
 
             // Walk player far away to (160, 160) -> chunk (10, 10), outside renderDistance=2 from (0, 0)
-            val farJob = world.streamChunksAround(playerX = 160f, playerZ = 160f, forceCheck = true)
+            val farJob = world.streamChunksAround(playerX = 160.0, playerZ = 160.0, forceCheck = true)
             farJob?.let { awaitJob(it) }
             storage.awaitPendingWritesBlocking()
 
@@ -236,7 +236,7 @@ class Tdd015SaveSystemAndPersistenceTest {
             assertTrue(File(worldDir, "entities/c_0_1_0.json").exists())
 
             // Walk back near (8, 8) -> chunk (0, 1, 0) reloads asynchronously with block & GasVolume entity!
-            val returnJob = world.streamChunksAround(playerX = 8f, playerZ = 8f, forceCheck = true)
+            val returnJob = world.streamChunksAround(playerX = 8.0, playerZ = 8.0, forceCheck = true)
             returnJob?.let { awaitJob(it) }
 
             assertTrue(world.hasChunk(0, 1, 0))
@@ -244,7 +244,7 @@ class Tdd015SaveSystemAndPersistenceTest {
             val restoredGas = world.entities.filterIsInstance<GasVolumeEntity>().firstOrNull()
             assertNotNull("GasVolume entity must respawn when chunk reloads", restoredGas)
             assertEquals(73.5f, restoredGas!!.gasAmount, 1e-4f)
-            assertEquals(4.5f, restoredGas.position.x, 1e-4f)
+            assertEquals(4.5, restoredGas.position.x, 1e-4)
             world.destroy()
         } finally {
             EntityPersistenceRegistry.unregister(gasTypeId)
@@ -264,17 +264,17 @@ class Tdd015SaveSystemAndPersistenceTest {
             val storage = scene.saveStorage!!
 
             // Move player & pause -> triggers async save
-            scene.player.posX = 31.0f
+            scene.player.posX = 31.0
             engine.setPaused(true)
             storage.lastSaveJob?.let { awaitJob(it) }
-            assertEquals(31.0f, storage.loadLevelData()!!.playerX, 1e-4f)
+            assertEquals(31.0, storage.loadLevelData()!!.playerX, 1e-4)
 
             // Unpause, move player again, and advance update by 300s (5 minutes) -> triggers Autosave
             engine.setPaused(false)
-            scene.player.posZ = 39.5f
+            scene.player.posZ = 39.5
             scene.update(300.0f)
             storage.lastSaveJob?.let { awaitJob(it) }
-            assertEquals(39.5f, storage.loadLevelData()!!.playerZ, 1e-4f)
+            assertEquals(39.5, storage.loadLevelData()!!.playerZ, 1e-4)
         } finally {
             engine.worldScene.destroySession()
         }
@@ -331,7 +331,7 @@ class Tdd015SaveSystemAndPersistenceTest {
         var gasAmount: Float = 0f
     ) : Entity(
         position = position,
-        boundingBox = AABB(position.x, position.y, position.z, position.x + 1f, position.y + 1f, position.z + 1f)
+        boundingBox = AABB(position.x, position.y, position.z, position.x + 1.0, position.y + 1.0, position.z + 1.0)
     ) {
         override val typeId: String = "testmod:gas_volume"
 
@@ -347,7 +347,7 @@ class Tdd015SaveSystemAndPersistenceTest {
         }
 
         override fun updateBoundingBox() {
-            boundingBox.set(position.x, position.y, position.z, position.x + 1f, position.y + 1f, position.z + 1f)
+            boundingBox.set(position.x, position.y, position.z, position.x + 1.0, position.y + 1.0, position.z + 1.0)
         }
     }
 }

@@ -156,7 +156,7 @@ class ReleaseCrashRegressionTest {
         val world = engine.worldScene.world
         world.clearEntities()
 
-        val drop = ItemDropEntity(Vec3(-5.0f, -65.0f, -5.0f))
+        val drop = ItemDropEntity(Vec3(-5.0, -65.0, -5.0))
         world.spawnEntity(drop)
         world.tickEntities(0.05f)
 
@@ -191,7 +191,12 @@ class ReleaseCrashRegressionTest {
             try {
                 repeat(120) {
                     engine.onDrawFrame()
-                    engine.worldScene.worldRenderer.computeVisibleChunks(engine.camera.viewProjectionMatrix)
+                    engine.worldScene.worldRenderer.computeVisibleChunks(
+                        engine.camera.viewProjectionMatrix,
+                        engine.camera.eyeX,
+                        engine.camera.eyeY,
+                        engine.camera.eyeZ
+                    )
                     Thread.sleep(2)
                 }
             } catch (t: Throwable) {
