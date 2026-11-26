@@ -39,6 +39,7 @@ jobs:
           test -n "$OXIPNG_SOURCE"
           install -m 0755 "$OXIPNG_SOURCE" "$INSTALL_DIR/oxipng"
           echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+          export PATH="$INSTALL_DIR:$PATH"
           oxipng --version
 
       - name: Restore ultra Oxipng cache
