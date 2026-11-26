@@ -4,6 +4,7 @@ import com.nitrous.tessellate.entity.ItemDropEntity
 import com.nitrous.tessellate.graphics.Camera3D
 import com.nitrous.tessellate.item.ItemRegistry
 import com.nitrous.tessellate.math.Vec3
+import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.registry.CommandDefinitionJson
 import com.nitrous.tessellate.scene.WorldScene
 import java.util.Locale
@@ -64,12 +65,25 @@ class JsonCommand(
             "instamine" -> handleInstaMine(context.worldScene)
             "fly" -> handleFly(context.worldScene)
             "fpptest" -> handleFppTest(context.args, context.worldScene, context.camera)
+            "cbopreload" -> handleCboPreload(context.worldScene)
             else -> {
                 val msg = definition.response?.takeIf { it.isNotBlank() }
                     ?: "Executed /$name"
                 CommandResult(true, msg)
             }
         }
+    }
+
+    private fun handleCboPreload(worldScene: WorldScene): CommandResult {
+        val result = AndroidRegistryBootstrap.reloadCborCache()
+        if (result.success) {
+            worldScene.syncSelectedItemFromInventory()
+            worldScene.worldRenderer.markAllChunksDirty()
+        }
+        return CommandResult(
+            success = result.success,
+            message = result.message
+        )
     }
 
     private fun handleGive(args: List<String>, worldScene: WorldScene): CommandResult {

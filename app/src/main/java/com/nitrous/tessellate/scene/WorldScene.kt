@@ -19,12 +19,14 @@ import com.nitrous.tessellate.math.Vec3
 import com.nitrous.tessellate.player.Player
 import com.nitrous.tessellate.save.SavedHotbarSlot
 import com.nitrous.tessellate.save.WorldSaveData
-import com.nitrous.tessellate.save.WorldSaveStorage
+import com.nitrous.tessellate.save.WorldSaveManager
 import com.nitrous.tessellate.texture.TexturePipeline
 import com.nitrous.tessellate.world.BlockPos
 import com.nitrous.tessellate.world.BlockType
+import com.nitrous.tessellate.world.Chunk
 import com.nitrous.tessellate.world.GameMode
 import com.nitrous.tessellate.world.RaycastHit
+import com.nitrous.tessellate.world.TypedValue
 import com.nitrous.tessellate.world.World
 import com.nitrous.tessellate.world.WorldRenderer
 import com.nitrous.tessellate.world.WorldSession
@@ -43,8 +45,11 @@ class WorldScene : IGameScene {
         private set
 
     @Volatile
-    var saveStorage: WorldSaveStorage? = null
+    var saveManager: WorldSaveManager? = null
         private set
+
+    val saveStorage: WorldSaveManager?
+        get() = saveManager
 
     @Volatile
     var world: World = World() // Streaming procedural world (renderDistance = 4, heightChunks = 8)
@@ -152,7 +157,7 @@ class WorldScene : IGameScene {
         session: WorldSession,
         camera: Camera3D? = null,
         texturePipeline: TexturePipeline? = cachedTexturePipeline,
-        saveStorage: WorldSaveStorage? = this.saveStorage
+        saveStorage: WorldSaveManager? = this.saveManager
     ) {
         cancelMining()
         currentTargetHit = null
@@ -161,7 +166,7 @@ class WorldScene : IGameScene {
         hasInitializedSpawn = true
         world.destroy()
 
-        this.saveStorage = saveStorage
+        this.saveManager = saveStorage
         currentSession = session
         val newWorld = World(
             session = session,
@@ -206,7 +211,7 @@ class WorldScene : IGameScene {
      */
     fun loadSavedWorld(
         saveData: WorldSaveData,
-        storage: WorldSaveStorage,
+        storage: WorldSaveManager,
         camera: Camera3D? = null,
         texturePipeline: TexturePipeline? = cachedTexturePipeline
     ) {
@@ -219,7 +224,7 @@ class WorldScene : IGameScene {
 
         val session = saveData.toWorldSession()
         currentSession = session
-        saveStorage = storage
+        saveManager = storage
 
         val loadedWorld = World(
             session = session,
@@ -260,6 +265,7 @@ class WorldScene : IGameScene {
             meshPrebuilder = resolveMeshPrebuilder(texturePipeline),
             forceCheck = true
         )
+        storage.cleanupOrphanedMastersAsync()
     }
 
     /**
@@ -290,17 +296,18 @@ class WorldScene : IGameScene {
             playerPitch = player.pitch,
             selectedSlot = player.inventory.selectedSlot,
             hotbar = hotbarList,
-            folderName = saveStorage?.worldDir?.name.orEmpty(),
+            folderName = saveManager?.worldDir?.name.orEmpty(),
             lastSavedEpochMs = System.currentTimeMillis()
         )
     }
 
     /**
-     * Persists `level.json`, all loaded non-empty chunks, and all active entities.
+     * Captures metadata (`level.json`), player inventory, and entity snapshots,
+     * and delegates all chunk `.bin` and disk persistence to the unified [WorldSaveManager].
      */
     fun saveCurrentWorld(blocking: Boolean = false): Job? {
         if (world.isDestroyed) return null
-        val storage = saveStorage ?: return null
+        val manager = saveManager ?: return null
         val data = buildWorldSaveData() ?: return null
 
         val loadedChunks = world.getAllChunks()
@@ -308,10 +315,10 @@ class WorldScene : IGameScene {
         world.copyEntitiesTo(activeEntities)
 
         return if (blocking) {
-            storage.saveWorldSnapshotSync(data, loadedChunks, activeEntities, world.chunksY)
+            manager.saveWorldSnapshotSync(data, loadedChunks, activeEntities, world.chunksY)
             null
         } else {
-            storage.saveWorldSnapshotAsync(data, loadedChunks, activeEntities, world.chunksY)
+            manager.saveWorldSnapshotAsync(data, loadedChunks, activeEntities, world.chunksY)
         }
     }
 
@@ -325,7 +332,7 @@ class WorldScene : IGameScene {
         autosaveTimerSeconds = 0f
         hasInitializedSpawn = false
         currentSession = null
-        saveStorage = null
+        saveManager = null
         world.destroy()
         worldRenderer.replaceWorld(world)
     }
@@ -463,7 +470,7 @@ class WorldScene : IGameScene {
             profiler.maybeLog()
         }
 
-        if (saveStorage != null && currentSession != null && deltaTimeSeconds > 0f) {
+        if (saveManager != null && currentSession != null && deltaTimeSeconds > 0f) {
             autosaveTimerSeconds += deltaTimeSeconds
             if (autosaveTimerSeconds >= AUTOSAVE_INTERVAL_SECONDS) {
                 autosaveTimerSeconds = 0f
@@ -712,10 +719,51 @@ class WorldScene : IGameScene {
     // --- Placement System Implementation ---
 
     /**
+     * Returns true if the currently selected hotbar item is `Developer:greener`.
+     */
+    fun isHoldingGreener(): Boolean {
+        return selectedItem.identifier.toCanonicalString().equals("Developer:greener", ignoreCase = true)
+    }
+
+    /**
+     * Applies `"devpaint" -> TypedValue.BooleanValue(true)` to the currently targeted block when
+     * holding `Developer:greener` without breaking the block, marking the chunk dirty for mesh
+     * rebuild and disk persistence.
+     */
+    fun useGreenerAtTarget(): Boolean {
+        val hit = currentTargetHit ?: return false
+        if (!isHoldingGreener()) return false
+        val pos = hit.blockPos
+        val chunk = world.getChunk(pos.x shr 4, pos.y shr 4, pos.z shr 4) ?: return false
+        val lx = pos.x and Chunk.MASK
+        val ly = pos.y and Chunk.MASK
+        val lz = pos.z and Chunk.MASK
+        if (chunk.getBlock(lx, ly, lz) == BlockType.AIR) return false
+
+        val localIndex = chunk.getBlockIndex(lx, ly, lz)
+        chunk.setBlockDataAtIndex(localIndex, "devpaint", TypedValue.BooleanValue(true))
+        return true
+    }
+
+    /**
+     * Handles a quick tap on the currently targeted block: paints with `Developer:greener` if held,
+     * otherwise attempts normal block placement.
+     */
+    fun tapTargetedBlock(): Boolean {
+        if (isHoldingGreener()) {
+            return useGreenerAtTarget()
+        }
+        return placeBlockAtTarget()
+    }
+
+    /**
      * Places the currently selected hotbar stack's block adjacent to the targeted block face.
      * Cancels placement if the selected inventory slot is empty or non-placeable.
      */
     fun placeBlockAtTarget(): Boolean {
+        if (isHoldingGreener()) {
+            return useGreenerAtTarget()
+        }
         val hit = currentTargetHit ?: return false
         val stack = player.inventory.getSelectedStack()
         if (stack == null || stack.count <= 0) {

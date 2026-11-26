@@ -70,6 +70,45 @@ data class ChunkEntityFileData(
 )
 
 /**
+ * Moshi-serializable representation of `:core`'s [com.nitrous.tessellate.world.TypedValue].
+ */
+data class TypedValueJson(
+    val type: String,
+    val booleanValue: Boolean? = null,
+    val stringValue: String? = null,
+    val intValue: Int? = null
+) {
+    fun toTypedValue(): com.nitrous.tessellate.world.TypedValue? = when (type) {
+        TYPE_BOOLEAN -> booleanValue?.let { com.nitrous.tessellate.world.TypedValue.BooleanValue(it) }
+        TYPE_STRING -> stringValue?.let { com.nitrous.tessellate.world.TypedValue.StringValue(it) }
+        TYPE_INT -> intValue?.let { com.nitrous.tessellate.world.TypedValue.IntValue(it) }
+        else -> null
+    }
+
+    companion object {
+        const val TYPE_BOOLEAN = "boolean"
+        const val TYPE_STRING = "string"
+        const val TYPE_INT = "int"
+
+        fun from(value: com.nitrous.tessellate.world.TypedValue): TypedValueJson = when (value) {
+            is com.nitrous.tessellate.world.TypedValue.BooleanValue ->
+                TypedValueJson(type = TYPE_BOOLEAN, booleanValue = value.value)
+            is com.nitrous.tessellate.world.TypedValue.StringValue ->
+                TypedValueJson(type = TYPE_STRING, stringValue = value.value)
+            is com.nitrous.tessellate.world.TypedValue.IntValue ->
+                TypedValueJson(type = TYPE_INT, intValue = value.value)
+        }
+    }
+}
+
+/**
+ * Sparse per-chunk custom block data sidecar wrapper saved at `saves/<world>/chunks/c_X_Y_Z.data`.
+ */
+data class ChunkBlockDataFileData(
+    val entries: Map<String, Map<String, TypedValueJson>> = emptyMap()
+)
+
+/**
  * Registry mapping entity `typeId` strings to factory functions for base and modded entities.
  */
 object EntityPersistenceRegistry {

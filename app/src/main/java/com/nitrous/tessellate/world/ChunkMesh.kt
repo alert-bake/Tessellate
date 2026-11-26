@@ -268,6 +268,22 @@ class ChunkMesh(
     }
 
     /**
+     * Returns a snapshot of decoded `(r, g, b)` vertex tint colors from current CPU vertex data.
+     */
+    fun getGeneratedVertexColors(transparentPass: Boolean = false): List<Triple<Float, Float, Float>> {
+        val arr = if (transparentPass) rawTransparentVertices else rawOpaqueVertices
+        val floatLen = if (transparentPass) transparentVertexFloatLength else opaqueVertexFloatLength
+        val result = ArrayList<Triple<Float, Float, Float>>(floatLen / FLOATS_PER_VERTEX)
+        var i = 0
+        while (i + 2 < floatLen) {
+            val w2 = arr[i + 2].toRawBits()
+            result.add(ChunkGeometryBuilder.decodeVertexColor(w2))
+            i += FLOATS_PER_VERTEX
+        }
+        return result
+    }
+
+    /**
      * Uploads raw [FloatArray] / [ShortArray] mesh buffers to OpenGL ES 3.0 VBO/EBOs.
      * `:core`'s [NativeBufferPool] owns DirectByteBuffer staging and 1/tick Flood GC lifecycle;
      * `:app` strictly binds buffers to OpenGL.

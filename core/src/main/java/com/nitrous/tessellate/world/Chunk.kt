@@ -1,6 +1,15 @@
 package com.nitrous.tessellate.world
 
 /**
+ * Typed custom metadata value stored sparsely per voxel in [Chunk.blockDataMap].
+ */
+sealed class TypedValue {
+    data class BooleanValue(val value: Boolean) : TypedValue()
+    data class StringValue(val value: String) : TypedValue()
+    data class IntValue(val value: Int) : TypedValue()
+}
+
+/**
  * 16x16x16 block storage unit decoupled from mesh generation and rendering.
  *
  * Includes compact Lazyprop lighting state ([lightIntended], [lightRendered]) on the signed
@@ -23,6 +32,13 @@ class Chunk(
 
     // 4096-byte compact block storage
     val blocks = ByteArray(VOLUME)
+
+    /**
+     * Sparse per-voxel custom block metadata keyed by local block index `(y shl 8) or (z shl 4) or x`.
+     * Stays empty (zero block entries) for standard unmodified terrain chunks.
+     */
+    val blockDataMap = HashMap<Int, Map<String, TypedValue>>()
+    private val blockDataLock = Any()
 
     /**
      * Lazyprop dual-layer light buffers (`-16..+16` per voxel).
@@ -67,6 +83,12 @@ class Chunk(
     var needsLightUpdate: Boolean = false
 
     @Volatile
+    var needsSave: Boolean = false
+
+    @Volatile
+    var saveEpoch: Int = 0
+
+    @Volatile
     var inLightQueue: Boolean = false
 
     @Volatile
@@ -86,8 +108,103 @@ class Chunk(
         private set
 
     @Suppress("NOTHING_TO_INLINE")
+    inline fun getBlockIndex(lx: Int, ly: Int, lz: Int): Int {
+        return (ly shl 8) or (lz shl 4) or lx
+    }
+
+    @Suppress("NOTHING_TO_INLINE")
     private inline fun getIndex(lx: Int, ly: Int, lz: Int): Int {
         return (ly shl 8) or (lz shl 4) or lx
+    }
+
+    /**
+     * Inserts or updates [key] -> [value] for the block at local index [index],
+     * marking the chunk dirty for both mesh rebuild and async disk persistence.
+     */
+    fun setBlockDataAtIndex(index: Int, key: String, value: TypedValue) {
+        if (index !in 0 until VOLUME) return
+        synchronized(blockDataLock) {
+            val existing = blockDataMap[index]
+            val updated = if (existing != null) {
+                HashMap(existing).apply { put(key, value) }
+            } else {
+                hashMapOf(key to value)
+            }
+            blockDataMap[index] = updated
+        }
+        meshDirtyEpoch++
+        needsMeshRebuild = true
+        saveEpoch++
+        needsSave = true
+    }
+
+    fun setBlockData(lx: Int, ly: Int, lz: Int, key: String, value: TypedValue) {
+        if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return
+        setBlockDataAtIndex(getIndex(lx, ly, lz), key, value)
+    }
+
+    fun getBlockDataAtIndex(index: Int, key: String): TypedValue? {
+        if (blockDataMap.isEmpty()) return null
+        return synchronized(blockDataLock) {
+            blockDataMap[index]?.get(key)
+        }
+    }
+
+    fun getBlockData(lx: Int, ly: Int, lz: Int, key: String): TypedValue? {
+        if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return null
+        return getBlockDataAtIndex(getIndex(lx, ly, lz), key)
+    }
+
+    fun isDevPaintedAtIndex(index: Int): Boolean {
+        val value = getBlockDataAtIndex(index, "devpaint") as? TypedValue.BooleanValue
+        return value?.value == true
+    }
+
+    fun isDevPainted(lx: Int, ly: Int, lz: Int): Boolean {
+        if (blockDataMap.isEmpty()) return false
+        if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return false
+        return isDevPaintedAtIndex(getIndex(lx, ly, lz))
+    }
+
+    fun removeBlockDataAtIndex(index: Int): Boolean {
+        val removed = synchronized(blockDataLock) {
+            blockDataMap.remove(index) != null
+        }
+        if (removed) {
+            meshDirtyEpoch++
+            needsMeshRebuild = true
+            saveEpoch++
+            needsSave = true
+        }
+        return removed
+    }
+
+    fun snapshotBlockData(): Map<Int, Map<String, TypedValue>> {
+        if (blockDataMap.isEmpty()) return emptyMap()
+        return synchronized(blockDataLock) {
+            if (blockDataMap.isEmpty()) {
+                emptyMap()
+            } else {
+                HashMap<Int, Map<String, TypedValue>>(blockDataMap.size).apply {
+                    for ((idx, entries) in blockDataMap) {
+                        if (entries.isNotEmpty()) {
+                            put(idx, HashMap(entries))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun restoreBlockData(data: Map<Int, Map<String, TypedValue>>) {
+        synchronized(blockDataLock) {
+            blockDataMap.clear()
+            for ((idx, entries) in data) {
+                if (idx in 0 until VOLUME && entries.isNotEmpty()) {
+                    blockDataMap[idx] = HashMap(entries)
+                }
+            }
+        }
     }
 
     /**
@@ -122,9 +239,16 @@ class Chunk(
         val oldId = blocks[idx]
         if (oldId != type.id) {
             blocks[idx] = type.id
+            if (blockDataMap.isNotEmpty()) {
+                synchronized(blockDataLock) {
+                    blockDataMap.remove(idx)
+                }
+            }
             meshDirtyEpoch++
             needsMeshRebuild = true
             needsLightUpdate = true
+            saveEpoch++
+            needsSave = true
             if (type != BlockType.AIR) {
                 isEmpty = false
                 isCompletelyLit = false
@@ -146,6 +270,8 @@ class Chunk(
     fun setBlockRaw(lx: Int, ly: Int, lz: Int, type: BlockType) {
         if (lx !in 0 until SIZE || ly !in 0 until SIZE || lz !in 0 until SIZE) return
         blocks[getIndex(lx, ly, lz)] = type.id
+        saveEpoch++
+        needsSave = true
         if (type != BlockType.AIR) {
             isEmpty = false
             isCompletelyLit = false
@@ -163,10 +289,17 @@ class Chunk(
      */
     fun fill(type: BlockType) {
         blocks.fill(type.id)
+        if (blockDataMap.isNotEmpty()) {
+            synchronized(blockDataLock) {
+                blockDataMap.clear()
+            }
+        }
         isEmpty = (type == BlockType.AIR)
         isSolidOpaque = type.isOpaque
         meshDirtyEpoch++
         needsMeshRebuild = true
+        saveEpoch++
+        needsSave = true
         if (type.isOpaque) {
             markCompletelyDark()
         } else if (type == BlockType.AIR) {

@@ -36,6 +36,7 @@ object AndroidRegistryBootstrap {
 
     fun ensureInitialized(context: Context? = null) {
         CommandRegistry.ensureBootstrapHook()
+        RegistryBootstrap.setCborCacheDelegate(CborRegistryCache)
         val source = context?.let { AndroidContentAssetSource(it) }
         RegistryBootstrap.ensureInitialized(assetSource = source)
     }
@@ -53,6 +54,7 @@ object AndroidRegistryBootstrap {
         preFreezeHook: (() -> Unit)? = null
     ) {
         CommandRegistry.ensureBootstrapHook()
+        RegistryBootstrap.setCborCacheDelegate(CborRegistryCache)
         val source = context?.let { AndroidContentAssetSource(it) }
         RegistryBootstrap.initialize(
             assetSource = source,
@@ -65,6 +67,19 @@ object AndroidRegistryBootstrap {
             extraStructoidJsons = extraStructoidJsons,
             forceReinitialize = forceReinitialize,
             preFreezeHook = preFreezeHook
+        )
+    }
+
+    fun reloadCborCache(
+        context: Context? = null,
+        modContentDirs: List<File> = emptyList()
+    ): CborReloadResult {
+        CommandRegistry.ensureBootstrapHook()
+        RegistryBootstrap.setCborCacheDelegate(CborRegistryCache)
+        val source = context?.let { AndroidContentAssetSource(it) }
+        return RegistryBootstrap.reloadCborCache(
+            assetSource = source,
+            modContentDirs = modContentDirs
         )
     }
 }

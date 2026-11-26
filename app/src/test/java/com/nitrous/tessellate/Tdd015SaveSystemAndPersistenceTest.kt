@@ -173,15 +173,15 @@ class Tdd015SaveSystemAndPersistenceTest {
             engine.worldScene.world.setBlock(20, 82, 20, BlockType.STONE)
             engine.saveAndQuitToWorldSelect()
 
-            // Y=0 has stone/dirt/grass -> saved as exact raw 4096 bytes
+            // Y=0 has stone/dirt/grass -> saved using Osmium Protocol
             val floorChunkFile = File(worldDir, "chunks/c_1_0_1.bin")
             assertTrue(floorChunkFile.exists())
-            assertEquals(Chunk.VOLUME.toLong(), floorChunkFile.length())
+            assertTrue(floorChunkFile.length() > 0)
 
-            // Y=5 had one stone block -> saved as exact raw 4096 bytes
+            // Y=5 had one stone block -> saved using Osmium Protocol
             val editedSkyChunkFile = File(worldDir, "chunks/c_1_5_1.bin")
             assertTrue(editedSkyChunkFile.exists())
-            assertEquals(Chunk.VOLUME.toLong(), editedSkyChunkFile.length())
+            assertTrue(editedSkyChunkFile.length() > 0)
 
             // Y=7 is 100% air -> must NOT be saved
             val emptySkyChunkFile = File(worldDir, "chunks/c_1_7_1.bin")

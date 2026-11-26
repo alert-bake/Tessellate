@@ -15,6 +15,7 @@ import com.nitrous.tessellate.worldgen.WorldGenRegistry
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 
 /**
@@ -68,12 +69,39 @@ object RegistryBootstrap {
     @Volatile
     private var commandDelegate: CommandBootstrapDelegate? = null
 
+    @Volatile
+    private var cborCacheDelegate: RegistryCborCacheDelegate? = null
+
+    @Volatile
+    var lastBootUsedCborCache: Boolean = false
+        private set
+
+    @Volatile
+    var lastJsonFilesParsedCount: Int = 0
+        private set
+
+    @Volatile
+    var lastSourceHash: String = ""
+        private set
+
+    @Volatile
+    var cborCacheHits: Int = 0
+        private set
+
+    @Volatile
+    var cborCacheMisses: Int = 0
+        private set
+
     fun setDefaultAssetSource(assetSource: ContentAssetSource?) {
         defaultAssetSource = assetSource
     }
 
     fun setCommandDelegate(delegate: CommandBootstrapDelegate?) {
         commandDelegate = delegate
+    }
+
+    fun setCborCacheDelegate(delegate: RegistryCborCacheDelegate?) {
+        cborCacheDelegate = delegate
     }
 
     fun freezeCommandDelegate() {
@@ -97,7 +125,8 @@ object RegistryBootstrap {
                     extraCommandJsons = emptyList(),
                     extraWorldGenPassJsons = emptyList(),
                     extraStructoidJsons = emptyList(),
-                    preFreezeHook = null
+                    preFreezeHook = null,
+                    bypassCacheRead = false
                 )
             }
         }
@@ -129,7 +158,8 @@ object RegistryBootstrap {
             }
             val contextModSignature = computeModSignature(effectiveSource)
             val modsChanged = effectiveSource != null && contextModSignature != lastLoadedModSignature
-            if (state == State.INITIALIZED && !forceReinitialize && !modsChanged &&
+            val cacheMissing = cborCacheDelegate != null && (effectiveSource?.getCborCacheFile()?.isFile == false)
+            if (state == State.INITIALIZED && !forceReinitialize && !modsChanged && !cacheMissing &&
                 modContentDirs.isEmpty() && extraBlockJsons.isEmpty() &&
                 extraItemJsons.isEmpty() && extraRecipeJsons.isEmpty() &&
                 extraCommandJsons.isEmpty() && extraWorldGenPassJsons.isEmpty() &&
@@ -146,8 +176,95 @@ object RegistryBootstrap {
                 extraCommandJsons = extraCommandJsons,
                 extraWorldGenPassJsons = extraWorldGenPassJsons,
                 extraStructoidJsons = extraStructoidJsons,
-                preFreezeHook = preFreezeHook
+                preFreezeHook = preFreezeHook,
+                bypassCacheRead = false
             )
+        }
+    }
+
+    /**
+     * Clears any existing `data.cbor` cache, parses all JSON content files cleanly, rebuilds and
+     * freezes all registries, and writes a fresh atomic `data.cbor` cache.
+     */
+    fun reloadCborCache(
+        assetSource: ContentAssetSource? = defaultAssetSource,
+        modContentDirs: List<File> = emptyList()
+    ): CborReloadResult {
+        synchronized(bootstrapLock) {
+            val effectiveSource = assetSource ?: defaultAssetSource
+            if (assetSource != null) {
+                defaultAssetSource = assetSource
+            }
+            val cacheFile = effectiveSource?.getCborCacheFile()
+                ?: return CborReloadResult(
+                    success = false,
+                    parsedJsonCount = 0,
+                    cacheFilePath = null,
+                    sourceHash = null,
+                    message = "CBOR cache path unavailable (no asset source configured)"
+                )
+            val delegate = cborCacheDelegate
+                ?: return CborReloadResult(
+                    success = false,
+                    parsedJsonCount = 0,
+                    cacheFilePath = cacheFile.absolutePath,
+                    sourceHash = null,
+                    message = "CBOR cache encoder unavailable"
+                )
+
+            val tempFile = File(cacheFile.parentFile, "${cacheFile.name}.tmp")
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
+            if (cacheFile.exists() && !cacheFile.delete()) {
+                return CborReloadResult(
+                    success = false,
+                    parsedJsonCount = 0,
+                    cacheFilePath = cacheFile.absolutePath,
+                    sourceHash = null,
+                    message = "Failed to delete existing CBOR cache at ${cacheFile.name}"
+                )
+            }
+
+            return try {
+                initializeInternal(
+                    assetSource = effectiveSource,
+                    modContentDirs = modContentDirs,
+                    extraBlockJsons = emptyList(),
+                    extraItemJsons = emptyList(),
+                    extraRecipeJsons = emptyList(),
+                    extraCommandJsons = emptyList(),
+                    extraWorldGenPassJsons = emptyList(),
+                    extraStructoidJsons = emptyList(),
+                    preFreezeHook = null,
+                    bypassCacheRead = true
+                )
+                if (!cacheFile.isFile || cacheFile.length() == 0L) {
+                    CborReloadResult(
+                        success = false,
+                        parsedJsonCount = lastJsonFilesParsedCount,
+                        cacheFilePath = cacheFile.absolutePath,
+                        sourceHash = lastSourceHash,
+                        message = "JSON reloaded (${lastJsonFilesParsedCount} files), but failed to write ${cacheFile.name}"
+                    )
+                } else {
+                    CborReloadResult(
+                        success = true,
+                        parsedJsonCount = lastJsonFilesParsedCount,
+                        cacheFilePath = cacheFile.absolutePath,
+                        sourceHash = lastSourceHash,
+                        message = "Rebuilt CBOR cache (${lastJsonFilesParsedCount} JSON files -> ${cacheFile.name})"
+                    )
+                }
+            } catch (t: Throwable) {
+                CborReloadResult(
+                    success = false,
+                    parsedJsonCount = 0,
+                    cacheFilePath = cacheFile.absolutePath,
+                    sourceHash = null,
+                    message = "CBOR cache reload failed: ${t.message ?: t::class.java.simpleName}"
+                )
+            }
         }
     }
 
@@ -162,16 +279,24 @@ object RegistryBootstrap {
             "P" to File(userModDir, "worldgen/passes"),
             "S" to File(userModDir, "worldgen/structoids")
         )
-        return buildString {
-            for ((prefix, dir) in subDirs) {
-                val files = dir.listFiles { f ->
-                    f.isFile && f.name.endsWith(".json", ignoreCase = true)
-                }?.sortedBy { it.name }.orEmpty()
-                for (f in files) {
-                    append(prefix).append(':').append(f.name).append(':').append(f.length()).append(';')
-                }
+        val digest = MessageDigest.getInstance("SHA-256")
+        var anyFile = false
+        for ((prefix, dir) in subDirs) {
+            val files = dir.listFiles { f ->
+                f.isFile && f.name.endsWith(".json", ignoreCase = true)
+            }?.sortedBy { it.name }.orEmpty()
+            for (f in files) {
+                anyFile = true
+                digest.update(prefix.toByteArray(Charsets.UTF_8))
+                digest.update(0)
+                digest.update(f.name.toByteArray(Charsets.UTF_8))
+                digest.update(0)
+                digest.update(f.readBytes())
+                digest.update(0)
             }
         }
+        if (!anyFile) return ""
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun initializeInternal(
@@ -183,17 +308,11 @@ object RegistryBootstrap {
         extraCommandJsons: List<String>,
         extraWorldGenPassJsons: List<String>,
         extraStructoidJsons: List<String>,
-        preFreezeHook: (() -> Unit)?
+        preFreezeHook: (() -> Unit)?,
+        bypassCacheRead: Boolean
     ) {
         state = State.INITIALIZING
         try {
-            // 1. Initialize registries
-            BlockRegistry.clearForBootstrap()
-            ItemRegistry.clearForBootstrap()
-            RecipeRegistry.clearForBootstrap()
-            WorldGenRegistry.clearForBootstrap()
-            commandDelegate?.clearForBootstrap()
-
             // Collect mod directories (user mod content dir if present + caller-supplied dirs)
             val effectiveModDirs = buildList {
                 val userModDir = assetSource?.getUserModContentDir()
@@ -203,26 +322,115 @@ object RegistryBootstrap {
                 addAll(modContentDirs)
             }
 
-            // 2. Load JSON content definitions
-            val blockDefs = loadBlockDefinitions(assetSource, effectiveModDirs, extraBlockJsons)
-            val itemDefs = loadItemDefinitions(assetSource, effectiveModDirs, extraItemJsons)
-            val recipeDefs = loadRecipeDefinitions(assetSource, effectiveModDirs, extraRecipeJsons)
-            val commandDefs = loadCommandDefinitions(assetSource, effectiveModDirs, extraCommandJsons)
-            val passDefs = loadWorldGenPassDefinitions(assetSource, effectiveModDirs, extraWorldGenPassJsons)
-            val structoidDefs = loadStructoidDefinitions(assetSource, effectiveModDirs, extraStructoidJsons)
+            // Gather raw JSON sources (strings only; no JSON parsing yet)
+            val blockSources = collectJsonSources(assetSource, ASSETS_BLOCKS_DIR, effectiveModDirs, "blocks", extraBlockJsons)
+            val itemSources = collectJsonSources(assetSource, ASSETS_ITEMS_DIR, effectiveModDirs, "items", extraItemJsons)
+            val recipeSources = collectJsonSources(assetSource, ASSETS_RECIPES_DIR, effectiveModDirs, "recipes", extraRecipeJsons)
+            val commandSources = collectJsonSources(assetSource, ASSETS_COMMANDS_DIR, effectiveModDirs, "commands", extraCommandJsons)
+            val passSources = collectJsonSources(
+                assetSource = assetSource,
+                assetSubDir = ASSETS_WORLDGEN_PASSES_DIR,
+                modContentDirs = effectiveModDirs,
+                modSubFolder = "worldgen/passes",
+                extraJsons = extraWorldGenPassJsons
+            )
+            val structoidSources = collectJsonSources(
+                assetSource = assetSource,
+                assetSubDir = ASSETS_STRUCTOIDS_DIR,
+                modContentDirs = effectiveModDirs,
+                modSubFolder = "worldgen/structoids",
+                extraJsons = extraStructoidJsons
+            )
+
+            val sourceHash = computeSourceSha256(
+                blockSources = blockSources,
+                itemSources = itemSources,
+                recipeSources = recipeSources,
+                commandSources = commandSources,
+                passSources = passSources,
+                structoidSources = structoidSources
+            )
+
+            val isCacheEligible = preFreezeHook == null &&
+                extraBlockJsons.isEmpty() &&
+                extraItemJsons.isEmpty() &&
+                extraRecipeJsons.isEmpty() &&
+                extraCommandJsons.isEmpty() &&
+                extraWorldGenPassJsons.isEmpty() &&
+                extraStructoidJsons.isEmpty()
+
+            val cacheFile = if (isCacheEligible) assetSource?.getCborCacheFile() else null
+            val cacheDelegate = cborCacheDelegate
+
+            // Try fast-path CBOR cache load if valid & SHA-256 matches
+            if (!bypassCacheRead && cacheFile != null && cacheDelegate != null && cacheFile.isFile) {
+                val cachedSnapshot = cacheDelegate.readCache(cacheFile)
+                if (cachedSnapshot != null &&
+                    cachedSnapshot.version == RegistryCacheSnapshot.CURRENT_VERSION &&
+                    cachedSnapshot.sourceHash == sourceHash &&
+                    tryRestoreFromCborSnapshot(cachedSnapshot)
+                ) {
+                    lastBootUsedCborCache = true
+                    lastJsonFilesParsedCount = 0
+                    lastSourceHash = sourceHash
+                    cborCacheHits++
+                    lastLoadedModSignature = computeModSignature(assetSource)
+                    state = State.INITIALIZED
+                    return
+                }
+            }
+
+            // 1. Initialize/clear registries for full JSON boot
+            clearRegistriesForBootstrap()
+
+            // 2. Parse JSON content definitions
+            var parsedCount = 0
+            if (blockSources.isEmpty()) {
+                throw ContentLoadException("No block JSON definitions found under $ASSETS_BLOCKS_DIR")
+            }
+            val blockDefs = blockSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, blockAdapter, "block definition")
+            }
+            if (itemSources.isEmpty()) {
+                throw ContentLoadException("No item JSON definitions found under $ASSETS_ITEMS_DIR")
+            }
+            val itemDefs = itemSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, itemAdapter, "item definition")
+            }
+            val recipeDefs = recipeSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, recipeAdapter, "recipe definition")
+            }
+            val commandDefs = commandSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, commandAdapter, "command definition")
+            }
+            val passDefs = passSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, worldGenPassAdapter, "worldgen pass definition")
+            }
+            val structoidDefs = structoidSources.map { (name, json) ->
+                parsedCount++
+                parseJson(name, json, structoidAdapter, "structoid definition")
+            }
 
             // Sort block definitions so air loads first (guaranteeing numeric ID 0 for empty chunks)
             val orderedBlocks = orderBlockDefinitions(blockDefs)
+            val cachedBlocks = ArrayList<CachedBlockEntry>(orderedBlocks.size)
             for (def in orderedBlocks) {
-                registerBlockDefinition(def)
+                cachedBlocks.add(registerBlockDefinition(def))
             }
 
             // 3. Resolve relationships (link items -> registered BlockType, recipes -> registered Items)
+            val cachedItems = ArrayList<CachedItemEntry>(itemDefs.size)
             for (def in itemDefs) {
-                registerItemDefinition(def)
+                cachedItems.add(registerItemDefinition(def))
             }
+            val cachedRecipes = ArrayList<CachedRecipeEntry>(recipeDefs.size)
             for (def in recipeDefs) {
-                registerRecipeDefinition(def)
+                cachedRecipes.add(registerRecipeDefinition(def))
             }
 
             // Register vanilla + mod worldgen passes, structoids, and commands before freezing
@@ -255,17 +463,180 @@ object RegistryBootstrap {
             preFreezeHook?.invoke()
 
             // 4. Freeze all registries
-            BlockRegistry.freeze()
-            ItemRegistry.freeze()
-            RecipeRegistry.freeze()
-            WorldGenRegistry.freeze()
-            cmdDelegate?.freeze()
+            freezeAllRegistries()
+
+            // 5. Persist atomic CBOR cache for future boots
+            if (cacheFile != null && cacheDelegate != null) {
+                val snapshot = RegistryCacheSnapshot(
+                    version = RegistryCacheSnapshot.CURRENT_VERSION,
+                    sourceHash = sourceHash,
+                    blocks = cachedBlocks,
+                    items = cachedItems,
+                    recipes = cachedRecipes,
+                    commands = commandDefs,
+                    worldGenPasses = passDefs,
+                    structoids = structoidDefs
+                )
+                cacheDelegate.writeCacheAtomic(cacheFile, snapshot)
+            }
+
+            lastBootUsedCborCache = false
+            lastJsonFilesParsedCount = parsedCount
+            lastSourceHash = sourceHash
+            cborCacheMisses++
             lastLoadedModSignature = computeModSignature(assetSource)
             state = State.INITIALIZED
         } catch (t: Throwable) {
             state = State.UNINITIALIZED
             throw t
         }
+    }
+
+    private fun clearRegistriesForBootstrap() {
+        BlockRegistry.clearForBootstrap()
+        ItemRegistry.clearForBootstrap()
+        RecipeRegistry.clearForBootstrap()
+        WorldGenRegistry.clearForBootstrap()
+        commandDelegate?.clearForBootstrap()
+    }
+
+    private fun freezeAllRegistries() {
+        BlockRegistry.freeze()
+        ItemRegistry.freeze()
+        RecipeRegistry.freeze()
+        WorldGenRegistry.freeze()
+        commandDelegate?.freeze()
+    }
+
+    private fun tryRestoreFromCborSnapshot(snapshot: RegistryCacheSnapshot): Boolean {
+        if (snapshot.blocks.isEmpty() || snapshot.items.isEmpty()) return false
+        return try {
+            clearRegistriesForBootstrap()
+
+            for (block in snapshot.blocks) {
+                BlockRegistry.registerDynamic(
+                    identifier = Identifier.parse(block.id),
+                    isOpaque = block.isOpaque,
+                    topTexture = block.topTexture,
+                    sideTexture = block.sideTexture,
+                    bottomTexture = block.bottomTexture,
+                    hardness = block.hardness,
+                    isTransparent = block.isTransparent,
+                    isSolid = block.isSolid,
+                    isSimple = block.isSimple,
+                    model = block.model,
+                    lightEmission = block.lightEmission.coerceIn(0, 16).toByte()
+                )
+            }
+
+            for (itemEntry in snapshot.items) {
+                val identifier = Identifier.parse(itemEntry.id)
+                val resolvedBlock = itemEntry.blockId?.takeIf { it.isNotBlank() }?.let { rawId ->
+                    BlockRegistry.get(rawId)
+                        ?: throw ContentLoadException("Cached item '${itemEntry.id}' references missing block '$rawId'")
+                }
+                val resolvedType = parseItemType(itemEntry.itemType, resolvedBlock != null)
+                val item = if (resolvedBlock != null && resolvedType == ItemType.BLOCK) {
+                    BlockItem(
+                        identifier = identifier,
+                        displayName = itemEntry.displayName,
+                        block = resolvedBlock,
+                        maxStackSize = itemEntry.maxStackSize.coerceAtLeast(1)
+                    )
+                } else {
+                    Item(
+                        identifier = identifier,
+                        displayName = itemEntry.displayName,
+                        maxStackSize = itemEntry.maxStackSize.coerceAtLeast(1),
+                        associatedBlock = resolvedBlock,
+                        itemType = resolvedType
+                    )
+                }
+                ItemRegistry.register(item)
+            }
+
+            for (recipeEntry in snapshot.recipes) {
+                RecipeRegistry.register(
+                    CraftingRecipe(
+                        identifier = Identifier.parse(recipeEntry.id),
+                        ingredients = recipeEntry.ingredients.map { ing ->
+                            RecipeIngredient(
+                                itemId = ing.itemId,
+                                normalizedItemId = ing.normalizedItemId,
+                                count = ing.count.coerceAtLeast(1)
+                            )
+                        },
+                        resultItemId = recipeEntry.resultItemId,
+                        resultCount = recipeEntry.resultCount.coerceAtLeast(1)
+                    )
+                )
+            }
+
+            WorldGenRegistry.registerVanillaDefaults()
+            for (passDef in snapshot.worldGenPasses) {
+                WorldGenRegistry.register(DataDrivenWorldGenPass(passDef))
+            }
+            for (structDef in snapshot.structoids) {
+                WorldGenRegistry.registerStructoid(
+                    StructoidDefinition(
+                        id = structDef.id,
+                        originChunkX = structDef.originChunkX,
+                        originChunkY = structDef.originChunkY,
+                        originChunkZ = structDef.originChunkZ,
+                        sizeChunks = structDef.sizeChunks,
+                        noiseThreshold = structDef.noiseThreshold,
+                        noiseFrequency = structDef.noiseFrequency,
+                        carveAll = structDef.carveAll
+                    )
+                )
+            }
+
+            val cmdDelegate = commandDelegate
+            if (cmdDelegate != null) {
+                for (cmdDef in snapshot.commands) {
+                    cmdDelegate.registerDefinition(cmdDef)
+                }
+            }
+
+            freezeAllRegistries()
+            true
+        } catch (_: Throwable) {
+            clearRegistriesForBootstrap()
+            false
+        }
+    }
+
+    private fun computeSourceSha256(
+        blockSources: List<Pair<String, String>>,
+        itemSources: List<Pair<String, String>>,
+        recipeSources: List<Pair<String, String>>,
+        commandSources: List<Pair<String, String>>,
+        passSources: List<Pair<String, String>>,
+        structoidSources: List<Pair<String, String>>
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun feedSection(tag: String, entries: List<Pair<String, String>>) {
+            digest.update(tag.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+            digest.update(entries.size.toString().toByteArray(Charsets.UTF_8))
+            digest.update(0)
+            for ((name, content) in entries) {
+                digest.update(name.toByteArray(Charsets.UTF_8))
+                digest.update(0)
+                val bytes = content.toByteArray(Charsets.UTF_8)
+                digest.update(bytes.size.toString().toByteArray(Charsets.UTF_8))
+                digest.update(0)
+                digest.update(bytes)
+                digest.update(0)
+            }
+        }
+        feedSection("blocks", blockSources)
+        feedSection("items", itemSources)
+        feedSection("recipes", recipeSources)
+        feedSection("commands", commandSources)
+        feedSection("passes", passSources)
+        feedSection("structoids", structoidSources)
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun loadBlockDefinitions(
@@ -382,26 +753,44 @@ object RegistryBootstrap {
         return airList + otherList
     }
 
-    private fun registerBlockDefinition(def: BlockDefinitionJson) {
+    private fun registerBlockDefinition(def: BlockDefinitionJson): CachedBlockEntry {
         val identifier = Identifier.parse(def.id)
         val isOpaque = def.resolveOpaque()
         val isSimple = def.resolveSimple()
+        val top = def.textures.resolveTop()
+        val side = def.textures.resolveSide()
+        val bottom = def.textures.resolveBottom()
+        val model = def.resolveModel()
+        val light = def.resolveLightEmission()
         BlockRegistry.registerDynamic(
             identifier = identifier,
             isOpaque = isOpaque,
-            topTexture = def.textures.resolveTop(),
-            sideTexture = def.textures.resolveSide(),
-            bottomTexture = def.textures.resolveBottom(),
+            topTexture = top,
+            sideTexture = side,
+            bottomTexture = bottom,
             hardness = def.hardness,
             isTransparent = def.isTransparent,
             isSolid = def.isSolid,
             isSimple = isSimple,
-            model = def.resolveModel(),
-            lightEmission = def.resolveLightEmission()
+            model = model,
+            lightEmission = light
+        )
+        return CachedBlockEntry(
+            id = identifier.toCanonicalString(),
+            hardness = def.hardness,
+            isOpaque = isOpaque,
+            isTransparent = def.isTransparent,
+            isSolid = def.isSolid,
+            isSimple = isSimple,
+            model = model,
+            lightEmission = light.toInt(),
+            topTexture = top,
+            sideTexture = side,
+            bottomTexture = bottom
         )
     }
 
-    private fun registerItemDefinition(def: ItemDefinitionJson) {
+    private fun registerItemDefinition(def: ItemDefinitionJson): CachedItemEntry {
         val identifier = Identifier.parse(def.id)
         val displayName = def.displayName?.takeIf { it.isNotBlank() }
             ?: identifier.path.split('_').joinToString(" ") { part ->
@@ -438,9 +827,16 @@ object RegistryBootstrap {
         }
 
         ItemRegistry.register(item)
+        return CachedItemEntry(
+            id = identifier.toCanonicalString(),
+            displayName = displayName,
+            maxStackSize = maxStack,
+            itemType = resolvedType.name,
+            blockId = resolvedBlock?.identifier?.toCanonicalString()
+        )
     }
 
-    private fun registerRecipeDefinition(def: RecipeDefinitionJson) {
+    private fun registerRecipeDefinition(def: RecipeDefinitionJson): CachedRecipeEntry {
         val identifier = Identifier.parse(def.id)
         if (def.ingredients.isEmpty()) {
             throw ContentLoadException("Recipe '${def.id}' must declare at least one ingredient")
@@ -458,14 +854,27 @@ object RegistryBootstrap {
         val resultItem = ItemRegistry.internalRegistry.get(def.result.item)
             ?: throw ContentLoadException("Recipe '${def.id}' references unknown result item '${def.result.item}'")
         val resultCount = def.result.count.coerceAtLeast(1)
+        val resultItemId = resultItem.identifier.toCanonicalString()
 
         RecipeRegistry.register(
             CraftingRecipe(
                 identifier = identifier,
                 ingredients = resolvedIngredients,
-                resultItemId = resultItem.identifier.toCanonicalString(),
+                resultItemId = resultItemId,
                 resultCount = resultCount
             )
+        )
+        return CachedRecipeEntry(
+            id = identifier.toCanonicalString(),
+            ingredients = resolvedIngredients.map { ing ->
+                CachedRecipeIngredientEntry(
+                    itemId = ing.itemId,
+                    normalizedItemId = ing.normalizedItemId,
+                    count = ing.count
+                )
+            },
+            resultItemId = resultItemId,
+            resultCount = resultCount
         )
     }
 

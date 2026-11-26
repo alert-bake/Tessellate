@@ -21,6 +21,7 @@ fun interface ChunkMeshPrebuilder {
  */
 interface WorldChunkStorage {
     fun loadChunkBytes(pos: ChunkPos): ByteArray?
+    fun loadBlockData(pos: ChunkPos): Map<Int, Map<String, TypedValue>> = emptyMap()
     fun loadEntities(pos: ChunkPos): List<Entity>
     fun saveChunkAndEntitiesAsync(chunk: Chunk, chunkEntities: List<Entity>): Job
 }

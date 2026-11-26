@@ -95,6 +95,8 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.luaj.jse)
+  implementation(libs.lz4.java)
+  implementation(libs.cbor)
   implementation(libs.moshi.kotlin)
 
   testImplementation(libs.androidx.core)

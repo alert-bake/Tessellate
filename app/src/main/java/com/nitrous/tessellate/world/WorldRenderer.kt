@@ -64,6 +64,10 @@ class WorldRenderer(
     private var highlightShader: Shader? = null
     private var highlightVaoId: Int = 0
     private var highlightVboId: Int = 0
+    var lastVertexShaderSource: String = CHUNK_VERTEX_SHADER_SOURCE
+        private set
+    var lastFragmentShaderSource: String = CHUNK_FRAGMENT_SHADER_SOURCE
+        private set
 
     private val modelMatrix = Matrix4.create()
     private val mvpMatrix = Matrix4.create()
@@ -219,96 +223,11 @@ class WorldRenderer(
         syncedTopologyVersion = -1L
         syncWithWorld(initGlBuffers = false)
 
-        val vertexSource = """
-            #version 300 es
-            layout (location = 0) in uvec3 aPacked;
+        val vertexSource = CHUNK_VERTEX_SHADER_SOURCE
+        val fragmentSource = CHUNK_FRAGMENT_SHADER_SOURCE
 
-            uniform mat4 uMVPMatrix;
-            uniform vec3 uChunkOrigin;
-            uniform vec4 uTileRects[${TexturePipeline.MAX_ATLAS_TILES}];
-
-            out vec2 vTileUv;
-            out vec4 vTileRect;
-            out float vShade;
-            out float vLightBiased;
-            out vec3 vNormal;
-
-            vec3 decodeNormal(uint idx) {
-                if (idx == 0u) return vec3(0.0, 1.0, 0.0);
-                if (idx == 1u) return vec3(0.0, -1.0, 0.0);
-                if (idx == 2u) return vec3(0.0, 0.0, -1.0);
-                if (idx == 3u) return vec3(0.0, 0.0, 1.0);
-                if (idx == 4u) return vec3(-1.0, 0.0, 0.0);
-                if (idx == 5u) return vec3(1.0, 0.0, 0.0);
-                return vec3(0.0, 1.0, 0.0);
-            }
-
-            void main() {
-                uint w0 = aPacked.x;
-                uint w1 = aPacked.y;
-                uint w2 = aPacked.z;
-
-                float lx = float(w0 & 0x1FFFu) / 256.0;
-                float ly = float((w0 >> 13u) & 0x1FFFu) / 256.0;
-                float lz = float(w1 & 0x1FFFu) / 256.0;
-
-                uint normIdx = (w0 >> 26u) & 0x7u;
-                vNormal = decodeNormal(normIdx);
-
-                vLightBiased = float((w1 >> 13u) & 0x3Fu);
-                float uTile = float((w1 >> 19u) & 0x1Fu);
-                float vTile = float((w1 >> 24u) & 0x1Fu);
-                vTileUv = vec2(uTile, vTile);
-
-                uint tileId = min(w2 & 0xFFu, ${TexturePipeline.MAX_ATLAS_TILES - 1}u);
-                vTileRect = uTileRects[tileId];
-                vShade = float((w2 >> 8u) & 0xFFu) / 255.0;
-
-                vec3 worldPos = uChunkOrigin + vec3(lx, ly, lz);
-                gl_Position = uMVPMatrix * vec4(worldPos, 1.0);
-            }
-        """.trimIndent()
-
-        val fragmentSource = """
-            #version 300 es
-            precision mediump float;
-
-            in vec2 vTileUv;
-            in vec4 vTileRect;
-            in float vShade;
-            in float vLightBiased;
-            in vec3 vNormal;
-
-            uniform sampler2D uTexture;
-            uniform vec3 uSunDir;
-
-            out vec4 fragColor;
-
-            void main() {
-                vec2 tileSpan = vTileRect.zw - vTileRect.xy;
-                vec2 wrappedUv = vTileUv - max(ceil(vTileUv) - 1.0, 0.0);
-                vec2 atlasUv = mix(vTileRect.xy, vTileRect.zw, clamp(wrappedUv, 0.0, 1.0));
-                vec2 dx = dFdx(vTileUv) * tileSpan;
-                vec2 dy = dFdy(vTileUv) * tileSpan;
-
-                vec4 texColor = textureGrad(uTexture, atlasUv, dx, dy);
-                if (texColor.a < 0.01) {
-                    discard;
-                }
-
-                // Sun directional lighting + TDD-019 signed [-16..+16] voxel brightness curve
-                vec3 norm = normalize(vNormal);
-                vec3 sun = normalize(uSunDir);
-                float sunDiff = max(dot(norm, sun), 0.0) * 0.45;
-                float ambient = 0.55;
-                float voxelLight = clamp(vLightBiased / 32.0, 0.0, 1.0);
-
-                float totalLight = (ambient + sunDiff) * vShade * voxelLight;
-                vec3 litColor = texColor.rgb * totalLight;
-
-                fragColor = vec4(litColor, texColor.a);
-            }
-        """.trimIndent()
+        lastVertexShaderSource = vertexSource
+        lastFragmentShaderSource = fragmentSource
 
         worldShader = Shader(vertexSource, fragmentSource).apply {
             compile()
@@ -892,6 +811,105 @@ class WorldRenderer(
         private const val MAX_SUBMISSIONS_PER_FRAME = 8
         private const val MAX_MESH_BUDGET_NS = 4_000_000L // 4ms
         private const val MAX_DRAIN_BUDGET_NS = 8_000_000L // 8ms
+
+        val CHUNK_VERTEX_SHADER_SOURCE: String = """
+            #version 300 es
+            layout (location = 0) in uvec3 aPacked;
+
+            uniform mat4 uMVPMatrix;
+            uniform vec3 uChunkOrigin;
+            uniform vec4 uTileRects[${TexturePipeline.MAX_ATLAS_TILES}];
+
+            out vec2 vTileUv;
+            out vec4 vTileRect;
+            out float vShade;
+            out float vLightBiased;
+            out vec3 vNormal;
+            out vec3 vColor;
+
+            vec3 decodeNormal(uint idx) {
+                if (idx == 0u) return vec3(0.0, 1.0, 0.0);
+                if (idx == 1u) return vec3(0.0, -1.0, 0.0);
+                if (idx == 2u) return vec3(0.0, 0.0, -1.0);
+                if (idx == 3u) return vec3(0.0, 0.0, 1.0);
+                if (idx == 4u) return vec3(-1.0, 0.0, 0.0);
+                if (idx == 5u) return vec3(1.0, 0.0, 0.0);
+                return vec3(0.0, 1.0, 0.0);
+            }
+
+            void main() {
+                uint w0 = aPacked.x;
+                uint w1 = aPacked.y;
+                uint w2 = aPacked.z;
+
+                float lx = float(w0 & 0x1FFFu) / 256.0;
+                float ly = float((w0 >> 13u) & 0x1FFFu) / 256.0;
+                float lz = float(w1 & 0x1FFFu) / 256.0;
+
+                uint normIdx = (w0 >> 26u) & 0x7u;
+                vNormal = decodeNormal(normIdx);
+
+                vLightBiased = float((w1 >> 13u) & 0x3Fu);
+                float uTile = float((w1 >> 19u) & 0x1Fu);
+                float vTile = float((w1 >> 24u) & 0x1Fu);
+                vTileUv = vec2(uTile, vTile);
+
+                uint tileId = min(w2 & 0xFFu, ${TexturePipeline.MAX_ATLAS_TILES - 1}u);
+                vTileRect = uTileRects[tileId];
+                vShade = float((w2 >> 8u) & 0xFFu) / 255.0;
+
+                float rCol = float((w2 >> 16u) & 0x1Fu) / 30.0;
+                float gCol = float((w2 >> 21u) & 0x1Fu) / 30.0;
+                float bCol = float(((w2 >> 26u) & 0xFu) | (((w2 >> 31u) & 0x1u) << 4u)) / 30.0;
+                vColor = vec3(min(rCol, 1.0), min(gCol, 1.0), min(bCol, 1.0));
+
+                vec3 worldPos = uChunkOrigin + vec3(lx, ly, lz);
+                gl_Position = uMVPMatrix * vec4(worldPos, 1.0);
+            }
+        """.trimIndent()
+
+        val CHUNK_FRAGMENT_SHADER_SOURCE: String = """
+            #version 300 es
+            precision mediump float;
+
+            in vec2 vTileUv;
+            in vec4 vTileRect;
+            in float vShade;
+            in float vLightBiased;
+            in vec3 vNormal;
+            in vec3 vColor;
+
+            uniform sampler2D uTexture;
+            uniform vec3 uSunDir;
+
+            out vec4 fragColor;
+
+            void main() {
+                vec2 tileSpan = vTileRect.zw - vTileRect.xy;
+                vec2 wrappedUv = vTileUv - max(ceil(vTileUv) - 1.0, 0.0);
+                vec2 atlasUv = mix(vTileRect.xy, vTileRect.zw, clamp(wrappedUv, 0.0, 1.0));
+                vec2 dx = dFdx(vTileUv) * tileSpan;
+                vec2 dy = dFdy(vTileUv) * tileSpan;
+
+                vec4 texColor = textureGrad(uTexture, atlasUv, dx, dy);
+                if (texColor.a < 0.01) {
+                    discard;
+                }
+
+                // Sun directional lighting + TDD-019 signed [-16..+16] voxel brightness curve
+                vec3 norm = normalize(vNormal);
+                vec3 sun = normalize(uSunDir);
+                float sunDiff = max(dot(norm, sun), 0.0) * 0.45;
+                float ambient = 0.55;
+                float voxelLight = clamp(vLightBiased / 32.0, 0.0, 1.0);
+
+                float totalLight = (ambient + sunDiff) * vShade * voxelLight;
+                vec3 tintedTexRgb = texColor.rgb * vColor;
+                vec3 litColor = tintedTexRgb * totalLight;
+
+                fragColor = vec4(litColor, texColor.a);
+            }
+        """.trimIndent()
 
         /** Fast sort ascending by [ChunkMesh.sortDistSq]: insertion sort for small lists, TimSort for large. */
         private fun sortMeshesAscendingByDistSq(list: MutableList<ChunkMesh>) {

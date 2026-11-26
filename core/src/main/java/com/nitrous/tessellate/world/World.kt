@@ -363,6 +363,10 @@ class World private constructor(
         val savedBytes = saveStorage?.loadChunkBytes(pos)
         if (savedBytes != null && savedBytes.size == Chunk.VOLUME) {
             System.arraycopy(savedBytes, 0, chunk.blocks, 0, Chunk.VOLUME)
+            val savedBlockData = saveStorage?.loadBlockData(pos)
+            if (!savedBlockData.isNullOrEmpty()) {
+                chunk.restoreBlockData(savedBlockData)
+            }
             chunk.recalculateEmpty()
             chunk.markDirty()
         } else {

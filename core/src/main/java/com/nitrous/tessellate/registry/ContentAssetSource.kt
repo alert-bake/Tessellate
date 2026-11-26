@@ -10,6 +10,7 @@ import java.io.File
 interface ContentAssetSource {
     fun listJsonAssets(assetSubDir: String): List<Pair<String, String>>
     fun getUserModContentDir(): File? = null
+    fun getCborCacheFile(): File? = getUserModContentDir()?.let { File(it, "data.cbor") }
 }
 
 /**

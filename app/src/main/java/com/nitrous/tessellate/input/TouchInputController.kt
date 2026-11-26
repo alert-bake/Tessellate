@@ -460,7 +460,9 @@ class TouchInputController {
                 if (duration < holdMiningDelayMs && !worldScene.isMining) {
                     val heldBlock = worldScene.selectedItem.associatedBlock
                     val hasPlaceableBlock = heldBlock != null && heldBlock != com.nitrous.tessellate.world.BlockType.AIR
-                    if (worldScene.player.isInstaMine && !hasPlaceableBlock) {
+                    if (worldScene.isHoldingGreener()) {
+                        worldScene.tapTargetedBlock()
+                    } else if (worldScene.player.isInstaMine && !hasPlaceableBlock) {
                         val hit = worldScene.currentTargetHit
                         if (hit != null && worldScene.startMining(hit.blockPos)) {
                             worldScene.updateMining(0.001f, hit)

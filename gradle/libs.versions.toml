@@ -36,6 +36,8 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 luajJse = "3.0.1"
 activity = "1.10.1"
+lz4Java = "1.8.1"
+cbor = "0.9"
 
 
 [libraries]
@@ -77,6 +79,8 @@ androidx-credentials = { group = "androidx.credentials", name = "credentials", v
 androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 luaj-jse = { group = "org.luaj", name = "luaj-jse", version.ref = "luajJse" }
+lz4-java = { group = "at.yawk.lz4", name = "lz4-java", version.ref = "lz4Java" }
+cbor = { group = "co.nstant.in", name = "cbor", version.ref = "cbor" }
 
 
 [plugins]

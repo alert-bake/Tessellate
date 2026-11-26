@@ -46,6 +46,7 @@ object ItemRegistry {
     val DEBUGBUG: Item get() = getRequired("Debug:debugbug")
     val DEBUG_WAND: Item get() = getRequired("Debug:debug_wand")
     val THING_THAT_GOES_BRRR: Item get() = getRequired("Developer:thing_that_goes_brrr")
+    val GREENER: Item get() = getRequired("Developer:greener")
 
     internal fun clearForBootstrap() {
         registry.clearForBootstrap()

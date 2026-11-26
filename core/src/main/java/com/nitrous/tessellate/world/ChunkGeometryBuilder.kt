@@ -110,7 +110,10 @@ class ChunkGeometryBuilder {
         var transVOffset = 0
         var transIOffset = 0
 
-        var culledCount = 0
+        val culledCountInitial = 0
+        var culledCount = culledCountInitial
+        val blockDataSnapshot = if (chunk.blockDataMap.isEmpty()) emptyMap() else chunk.snapshotBlockData()
+        val hasBlockData = blockDataSnapshot.isNotEmpty()
 
         // 1. Greedy mesh standard cube blocks along all 6 primary directions
         for (dIdx in 0 until DIRECTIONS.size) {
@@ -182,9 +185,14 @@ class ChunkGeometryBuilder {
                             opaqueFaces++
                         }
 
+                        val blockIdx = chunk.getBlockIndex(lx, ly, lz)
+                        val isDevPainted = hasBlockData &&
+                            ((blockDataSnapshot[blockIdx]?.get("devpaint") as? TypedValue.BooleanValue)?.value == true)
+
                         val lightBiased = (neighborRenderedLight + LIGHT_BIAS).coerceIn(0, MAX_LIGHT_BIASED)
                         val cellIdx = (v shl 4) or u
                         val key = (1 shl 31) or
+                            ((if (isDevPainted) 1 else 0) shl 17) or
                             ((if (isTransparentPass) 1 else 0) shl 16) or
                             ((lightBiased and 0x3F) shl 8) or
                             (blockId.toInt() and 0xFF)
@@ -235,6 +243,10 @@ class ChunkGeometryBuilder {
                         val lightBiased = sliceLightScratch[startIdx]
                         val tileIndex = tileResolver.getTileIndex(block.getTextureForFace(dir))
                         val isTransparentPass = (key and (1 shl 16)) != 0
+                        val isDevPainted = (key and (1 shl 17)) != 0
+                        val colorR = if (isDevPainted) DEV_PAINT_R else 1.0f
+                        val colorG = if (isDevPainted) DEV_PAINT_G else 1.0f
+                        val colorB = if (isDevPainted) DEV_PAINT_B else 1.0f
 
                         if (isTransparentPass) {
                             if (transVCount + 4 <= MAX_SHORT_INDEX_VERTICES) {
@@ -257,7 +269,10 @@ class ChunkGeometryBuilder {
                                     w = w,
                                     h = h,
                                     lightBiased = lightBiased,
-                                    tileIndex = tileIndex
+                                    tileIndex = tileIndex,
+                                    colorR = colorR,
+                                    colorG = colorG,
+                                    colorB = colorB
                                 )
                                 transVOffset += FLOATS_PER_QUAD
                                 transInds[transIOffset++] = startVert
@@ -291,7 +306,10 @@ class ChunkGeometryBuilder {
                                     w = w,
                                     h = h,
                                     lightBiased = lightBiased,
-                                    tileIndex = tileIndex
+                                    tileIndex = tileIndex,
+                                    colorR = colorR,
+                                    colorG = colorG,
+                                    colorB = colorB
                                 )
                                 opaqueVOffset += FLOATS_PER_QUAD
                                 opaqueInds[opaqueIOffset++] = startVert
@@ -327,6 +345,12 @@ class ChunkGeometryBuilder {
                     val tileIndex = tileResolver.getTileIndex(block.topTexture)
                     val voxelLight = chunk.getRenderedLightUnchecked(lx, ly, lz)
                     val lightBiased = (voxelLight + LIGHT_BIAS).coerceIn(0, MAX_LIGHT_BIASED)
+                    val blockIdx = chunk.getBlockIndex(lx, ly, lz)
+                    val isDevPainted = hasBlockData &&
+                        ((blockDataSnapshot[blockIdx]?.get("devpaint") as? TypedValue.BooleanValue)?.value == true)
+                    val colorR = if (isDevPainted) DEV_PAINT_R else 1.0f
+                    val colorG = if (isDevPainted) DEV_PAINT_G else 1.0f
+                    val colorB = if (isDevPainted) DEV_PAINT_B else 1.0f
 
                     val neededFloats = transVOffset + FLOATS_PER_QUAD * 4
                     if (neededFloats > transVerts.size) {
@@ -352,7 +376,10 @@ class ChunkGeometryBuilder {
                         x0 = fx + minOff, y0 = fy, z0 = fz + minOff,
                         x1 = fx + maxOff, y1 = fy + 1f, z1 = fz + maxOff,
                         lightBiased = lightBiased,
-                        tileIndex = tileIndex
+                        tileIndex = tileIndex,
+                        colorR = colorR,
+                        colorG = colorG,
+                        colorB = colorB
                     )
                     transVOffset += FLOATS_PER_QUAD * 2
                     transIOffset += INDICES_PER_QUAD * 2
@@ -368,7 +395,10 @@ class ChunkGeometryBuilder {
                         x0 = fx + minOff, y0 = fy, z0 = fz + maxOff,
                         x1 = fx + maxOff, y1 = fy + 1f, z1 = fz + minOff,
                         lightBiased = lightBiased,
-                        tileIndex = tileIndex
+                        tileIndex = tileIndex,
+                        colorR = colorR,
+                        colorG = colorG,
+                        colorB = colorB
                     )
                     transVOffset += FLOATS_PER_QUAD * 2
                     transIOffset += INDICES_PER_QUAD * 2
@@ -424,7 +454,10 @@ class ChunkGeometryBuilder {
         w: Int,
         h: Int,
         lightBiased: Int,
-        tileIndex: Int
+        tileIndex: Int,
+        colorR: Float = 1.0f,
+        colorG: Float = 1.0f,
+        colorB: Float = 1.0f
     ) {
         val normIdx = dir.ordinal
         val shadeByte = (dir.faceShade * 255f).roundToInt().coerceIn(0, 255)
@@ -437,10 +470,10 @@ class ChunkGeometryBuilder {
                 val fx1 = (u0 + w).toFloat()
                 val fz0 = v0.toFloat()
                 val fz1 = (v0 + h).toFloat()
-                packVertex(target, o, fx0, fy, fz1, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy, fz1, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy, fz0, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx0, fy, fz0, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx0, fy, fz1, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy, fz1, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy, fz0, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx0, fy, fz0, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
             Direction.DOWN -> {
                 val fy = slice.toFloat()
@@ -448,10 +481,10 @@ class ChunkGeometryBuilder {
                 val fx1 = (u0 + w).toFloat()
                 val fz0 = v0.toFloat()
                 val fz1 = (v0 + h).toFloat()
-                packVertex(target, o, fx0, fy, fz0, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy, fz0, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy, fz1, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx0, fy, fz1, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx0, fy, fz0, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy, fz0, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy, fz1, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx0, fy, fz1, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
             Direction.NORTH -> {
                 val fz = slice.toFloat()
@@ -459,10 +492,10 @@ class ChunkGeometryBuilder {
                 val fx1 = (u0 + w).toFloat()
                 val fy0 = v0.toFloat()
                 val fy1 = (v0 + h).toFloat()
-                packVertex(target, o, fx1, fy0, fz, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx0, fy0, fz, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx0, fy1, fz, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy1, fz, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx1, fy0, fz, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx0, fy0, fz, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx0, fy1, fz, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy1, fz, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
             Direction.SOUTH -> {
                 val fz = (slice + 1).toFloat()
@@ -470,10 +503,10 @@ class ChunkGeometryBuilder {
                 val fx1 = (u0 + w).toFloat()
                 val fy0 = v0.toFloat()
                 val fy1 = (v0 + h).toFloat()
-                packVertex(target, o, fx0, fy0, fz, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy0, fz, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx1, fy1, fz, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx0, fy1, fz, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx0, fy0, fz, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy0, fz, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx1, fy1, fz, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx0, fy1, fz, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
             Direction.WEST -> {
                 val fx = slice.toFloat()
@@ -481,10 +514,10 @@ class ChunkGeometryBuilder {
                 val fy1 = (v0 + h).toFloat()
                 val fz0 = u0.toFloat()
                 val fz1 = (u0 + w).toFloat()
-                packVertex(target, o, fx, fy0, fz0, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy0, fz1, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy1, fz1, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy1, fz0, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx, fy0, fz0, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy0, fz1, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy1, fz1, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy1, fz0, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
             Direction.EAST -> {
                 val fx = (slice + 1).toFloat()
@@ -492,10 +525,10 @@ class ChunkGeometryBuilder {
                 val fy1 = (v0 + h).toFloat()
                 val fz0 = u0.toFloat()
                 val fz1 = (u0 + w).toFloat()
-                packVertex(target, o, fx, fy0, fz1, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy0, fz0, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy1, fz0, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte); o += FLOATS_PER_VERTEX
-                packVertex(target, o, fx, fy1, fz1, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte)
+                packVertex(target, o, fx, fy0, fz1, normIdx, 0, lightBiased, 0, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy0, fz0, normIdx, 0, lightBiased, w, h, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy1, fz0, normIdx, 0, lightBiased, w, 0, tileIndex, shadeByte, colorR, colorG, colorB); o += FLOATS_PER_VERTEX
+                packVertex(target, o, fx, fy1, fz1, normIdx, 0, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
             }
         }
     }
@@ -509,22 +542,25 @@ class ChunkGeometryBuilder {
         x0: Float, y0: Float, z0: Float,
         x1: Float, y1: Float, z1: Float,
         lightBiased: Int,
-        tileIndex: Int
+        tileIndex: Int,
+        colorR: Float = 1.0f,
+        colorG: Float = 1.0f,
+        colorB: Float = 1.0f
     ) {
         val normIdx = CROSS_NORMAL_INDEX
         val flags = CROSS_FLAG
         val shadeByte = 255
         var vo = vOffset
 
-        packVertex(targetVerts, vo, x0, y0, z0, normIdx, flags, lightBiased, 0, 1, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x1, y0, z1, normIdx, flags, lightBiased, 1, 1, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x1, y1, z1, normIdx, flags, lightBiased, 1, 0, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x0, y1, z0, normIdx, flags, lightBiased, 0, 0, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x0, y0, z0, normIdx, flags, lightBiased, 0, 1, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x1, y0, z1, normIdx, flags, lightBiased, 1, 1, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x1, y1, z1, normIdx, flags, lightBiased, 1, 0, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x0, y1, z0, normIdx, flags, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
 
-        packVertex(targetVerts, vo, x1, y0, z1, normIdx, flags, lightBiased, 0, 1, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x0, y0, z0, normIdx, flags, lightBiased, 1, 1, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x0, y1, z0, normIdx, flags, lightBiased, 1, 0, tileIndex, shadeByte); vo += FLOATS_PER_VERTEX
-        packVertex(targetVerts, vo, x1, y1, z1, normIdx, flags, lightBiased, 0, 0, tileIndex, shadeByte)
+        packVertex(targetVerts, vo, x1, y0, z1, normIdx, flags, lightBiased, 0, 1, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x0, y0, z0, normIdx, flags, lightBiased, 1, 1, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x0, y1, z0, normIdx, flags, lightBiased, 1, 0, tileIndex, shadeByte, colorR, colorG, colorB); vo += FLOATS_PER_VERTEX
+        packVertex(targetVerts, vo, x1, y1, z1, normIdx, flags, lightBiased, 0, 0, tileIndex, shadeByte, colorR, colorG, colorB)
 
         val fStart = baseVertex.toShort()
         targetIndices[iOffset + 0] = fStart
@@ -556,7 +592,10 @@ class ChunkGeometryBuilder {
         uvU: Int,
         uvV: Int,
         tileIndex: Int,
-        shadeByte: Int
+        shadeByte: Int,
+        colorR: Float = 1.0f,
+        colorG: Float = 1.0f,
+        colorB: Float = 1.0f
     ) {
         val xQ = (localX * POS_QUANT_SCALE).roundToInt().coerceIn(0, 8191)
         val yQ = (localY * POS_QUANT_SCALE).roundToInt().coerceIn(0, 8191)
@@ -572,8 +611,17 @@ class ChunkGeometryBuilder {
             ((uvU and 0x1F) shl 19) or
             ((uvV and 0x1F) shl 24)
 
+        val rQ = (colorR * COLOR_QUANT_SCALE).roundToInt().coerceIn(0, COLOR_QUANT_MAX)
+        val gQ = (colorG * COLOR_QUANT_SCALE).roundToInt().coerceIn(0, COLOR_QUANT_MAX)
+        val bQ = (colorB * COLOR_QUANT_SCALE).roundToInt().coerceIn(0, COLOR_QUANT_MAX)
+
+        // Note: bit 30 stays 0 so IEEE-754 exponent bits [23..30] can never form NaN/Infinity.
         val word2 = (tileIndex and 0xFF) or
-            ((shadeByte and 0xFF) shl 8)
+            ((shadeByte and 0xFF) shl 8) or
+            ((rQ and 0x1F) shl 16) or
+            ((gQ and 0x1F) shl 21) or
+            ((bQ and 0x0F) shl 26) or
+            (((bQ ushr 4) and 0x1) shl 31)
 
         target[offset] = Float.fromBits(word0)
         target[offset + 1] = Float.fromBits(word1)
@@ -585,6 +633,11 @@ class ChunkGeometryBuilder {
         const val VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4 // 12 bytes
         const val FLOATS_PER_QUAD = FLOATS_PER_VERTEX * 4
         const val INDICES_PER_QUAD = 6
+        const val DEV_PAINT_R = 0.3f
+        const val DEV_PAINT_G = 1.0f
+        const val DEV_PAINT_B = 0.3f
+        private const val COLOR_QUANT_MAX = 30
+        private const val COLOR_QUANT_SCALE = 30f
         private const val SLICE_AREA = Chunk.SIZE * Chunk.SIZE
         private const val POS_QUANT_SCALE = 256f
         private const val LIGHT_BIAS = 16
@@ -598,6 +651,17 @@ class ChunkGeometryBuilder {
         val EMPTY_FLOAT_ARRAY = FloatArray(0)
         val EMPTY_SHORT_ARRAY = ShortArray(0)
         private val DIRECTIONS = Direction.values()
+
+        fun decodeVertexColor(word2: Int): Triple<Float, Float, Float> {
+            val rQ = (word2 ushr 16) and 0x1F
+            val gQ = (word2 ushr 21) and 0x1F
+            val bQ = ((word2 ushr 26) and 0x0F) or (((word2 ushr 31) and 0x1) shl 4)
+            return Triple(
+                (rQ / COLOR_QUANT_SCALE).coerceIn(0f, 1f),
+                (gQ / COLOR_QUANT_SCALE).coerceIn(0f, 1f),
+                (bQ / COLOR_QUANT_SCALE).coerceIn(0f, 1f)
+            )
+        }
 
         fun shouldRenderFace(block: BlockType, neighbor: BlockType): Boolean {
             if (block == BlockType.AIR || block.isCrossModel) return false

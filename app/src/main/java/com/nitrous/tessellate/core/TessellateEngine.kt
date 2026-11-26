@@ -16,7 +16,6 @@ import com.nitrous.tessellate.modding.LuaModRuntime
 import com.nitrous.tessellate.registry.AndroidRegistryBootstrap
 import com.nitrous.tessellate.save.WorldSaveData
 import com.nitrous.tessellate.save.WorldSaveManager
-import com.nitrous.tessellate.save.WorldSaveStorage
 import com.nitrous.tessellate.scene.VoxelScene
 import com.nitrous.tessellate.scene.WorldScene
 import com.nitrous.tessellate.settings.CacheClearResult
@@ -390,11 +389,11 @@ class TessellateEngine(
      */
     fun startWorldSession(session: WorldSession) {
         val worldDir = WorldSaveManager.resolveNewWorldFolder(context, session.name)
-        val storage = WorldSaveStorage(worldDir)
+        val saveManager = WorldSaveManager(worldDir)
         synchronized(modeLock) {
             isPaused = false
             currentSceneMode = SceneMode.WORLD
-            worldScene.startSession(session, camera, texturePipeline, storage)
+            worldScene.startSession(session, camera, texturePipeline, saveManager)
             touchController.resetAllInputs()
             uiRenderer.onSceneModeChanged(SceneMode.WORLD)
             currentAppState = AppState.PLAYING
@@ -414,11 +413,11 @@ class TessellateEngine(
             context = context,
             folderName = saveData.folderName.ifBlank { saveData.worldName }
         )
-        val storage = WorldSaveStorage(worldDir)
+        val saveManager = WorldSaveManager(worldDir)
         synchronized(modeLock) {
             isPaused = false
             currentSceneMode = SceneMode.WORLD
-            worldScene.loadSavedWorld(saveData, storage, camera, texturePipeline)
+            worldScene.loadSavedWorld(saveData, saveManager, camera, texturePipeline)
             touchController.resetAllInputs()
             uiRenderer.onSceneModeChanged(SceneMode.WORLD)
             currentAppState = AppState.PLAYING

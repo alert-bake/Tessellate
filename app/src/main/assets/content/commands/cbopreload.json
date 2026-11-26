@@ -1,0 +1,6 @@
+{
+  "name": "cbopreload",
+  "description": "Clears the registry CBOR cache, re-parses all JSON files, and rebuilds data.cbor.",
+  "usage": "/cbopreload",
+  "action": "cbopreload"
+}
