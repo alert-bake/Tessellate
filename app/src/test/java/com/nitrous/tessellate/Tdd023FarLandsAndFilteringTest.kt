@@ -214,8 +214,8 @@ class Tdd023FarLandsAndFilteringTest {
             heightChunks = 8
         )
         try {
-            val baseCx = (522_816_000 shr 4)
-            val baseCz = (24 shr 4)
+            val baseCx = (522_816_000L shr 4)
+            val baseCz = (24L shr 4)
             world.ensureChunkColumnLoadedSync(baseCx + 1, baseCz)
             world.ensureChunkColumnLoadedSync(baseCx - 1, baseCz)
 
@@ -229,10 +229,10 @@ class Tdd023FarLandsAndFilteringTest {
                 camera.eyeY,
                 camera.eyeZ
             )
-            assertTrue("Chunk ahead (+X) at 522M must pass camera-relative frustum culling", visible.any { it.chunk.chunkX == baseCx + 1 })
-            assertFalse("Chunk behind (-X) at 522M must be frustum culled", visible.any { it.chunk.chunkX == baseCx - 1 })
+            assertTrue("Chunk ahead (+X) at 522M must pass camera-relative frustum culling", visible.any { it.chunk.chunkX == baseCx + 1L })
+            assertFalse("Chunk behind (-X) at 522M must be frustum culled", visible.any { it.chunk.chunkX == baseCx - 1L })
 
-            val frontMesh = visible.first { it.chunk.chunkX == baseCx + 1 }
+            val frontMesh = visible.first { it.chunk.chunkX == baseCx + 1L }
             val relOriginX = (frontMesh.originX - camera.eyeX).toFloat()
             val relOriginY = (frontMesh.originY - camera.eyeY).toFloat()
             val relOriginZ = (frontMesh.originZ - camera.eyeZ).toFloat()

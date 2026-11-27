@@ -120,7 +120,7 @@ class Tdd009FrustumAndAsyncTest {
         // Chunks at chunkZ = 0 (z=[0..16]) are strictly behind z=44 when looking toward +Z
         assertFalse(
             "Chunks at z=[0..16] behind camera must not be in visible render list",
-            lookingAway.any { it.chunk.chunkZ == 0 }
+            lookingAway.any { it.chunk.chunkZ == 0L }
         )
         assertNotEquals(world.getAllChunks().size, lookingAway.size)
     }

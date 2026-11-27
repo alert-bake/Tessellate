@@ -45,11 +45,14 @@ data class StructoidDefinition(
 ) {
     val parsedSize: StructoidSizeChunks = StructoidSizeChunks.parse(sizeChunks)
 
-    fun intersectsChunk(cx: Int, cy: Int, cz: Int): Boolean {
-        return cx in originChunkX until (originChunkX + parsedSize.sizeX) &&
-            cy in originChunkY until (originChunkY + parsedSize.sizeY) &&
-            cz in originChunkZ until (originChunkZ + parsedSize.sizeZ)
+    fun intersectsChunk(cx: Long, cy: Long, cz: Long): Boolean {
+        return cx in originChunkX.toLong() until (originChunkX.toLong() + parsedSize.sizeX) &&
+            cy in originChunkY.toLong() until (originChunkY.toLong() + parsedSize.sizeY) &&
+            cz in originChunkZ.toLong() until (originChunkZ.toLong() + parsedSize.sizeZ)
     }
+
+    fun intersectsChunk(cx: Int, cy: Int, cz: Int): Boolean =
+        intersectsChunk(cx.toLong(), cy.toLong(), cz.toLong())
 }
 
 /**

@@ -23,13 +23,15 @@ import kotlin.math.abs
 import kotlin.math.floor
 
 /**
- * Chunk-aligned integer coordinates used as keys in the loaded chunk map.
+ * Chunk-aligned 64-bit integer coordinates used as keys in the loaded chunk map.
  */
 data class ChunkPos(
-    val x: Int,
-    val y: Int,
-    val z: Int
-)
+    val x: Long,
+    val y: Long,
+    val z: Long
+) {
+    constructor(x: Int, y: Int, z: Int) : this(x.toLong(), y.toLong(), z.toLong())
+}
 
 /**
  * Procedural voxel world container managing chunk storage, async chunk streaming, and entities.
@@ -138,8 +140,8 @@ class World private constructor(
     private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + streamExceptionHandler)
     private val streamControlLock = Any()
     private var activeStreamJob: Job? = null
-    private var lastStreamCenterCx: Int = Int.MIN_VALUE
-    private var lastStreamCenterCz: Int = Int.MIN_VALUE
+    private var lastStreamCenterCx: Long = Long.MIN_VALUE
+    private var lastStreamCenterCz: Long = Long.MIN_VALUE
 
     @Volatile
     private var isStreamWindowUpToDate: Boolean = false
@@ -176,18 +178,29 @@ class World private constructor(
         generateTerrain()
     }
 
-    fun getChunk(cx: Int, cy: Int, cz: Int): Chunk? {
-        if (cy !in 0 until chunksY) return null
-        if (!isInfinite && (cx !in 0 until chunksX || cz !in 0 until chunksZ)) {
+    fun getChunk(cx: Long, cy: Long, cz: Long): Chunk? {
+        if (cy !in 0L until chunksY.toLong()) return null
+        if (!isInfinite && (cx !in 0L until chunksX.toLong() || cz !in 0L until chunksZ.toLong())) {
             return null
         }
-        val key = packChunkKey(cx, cy, cz)
-        return synchronized(chunkLock) {
-            fastChunks.get(key)
+        return if (canPackChunkKey(cx, cy, cz)) {
+            val key = packChunkKey(cx, cy, cz)
+            synchronized(chunkLock) {
+                fastChunks.get(key)
+            }
+        } else {
+            val pos = ChunkPos(cx, cy, cz)
+            synchronized(chunkLock) {
+                chunks[pos]
+            }
         }
     }
 
-    fun hasChunk(cx: Int, cy: Int, cz: Int): Boolean = getChunk(cx, cy, cz) != null
+    fun getChunk(cx: Int, cy: Int, cz: Int): Chunk? = getChunk(cx.toLong(), cy.toLong(), cz.toLong())
+
+    fun hasChunk(cx: Long, cy: Long, cz: Long): Boolean = getChunk(cx, cy, cz) != null
+
+    fun hasChunk(cx: Int, cy: Int, cz: Int): Boolean = getChunk(cx.toLong(), cy.toLong(), cz.toLong()) != null
 
     fun getLoadedChunkCount(): Int = synchronized(chunkLock) { chunks.size }
 
@@ -204,13 +217,15 @@ class World private constructor(
         budgetNs: Long = lightEngine.maxBudgetNs
     ): Int = lightEngine.step(this, maxNodes, budgetNs)
 
-    fun isHorizontalInBounds(wx: Int, wz: Int): Boolean {
-        return if (isInfinite) true else (wx in 0 until sizeX && wz in 0 until sizeZ)
+    fun isHorizontalInBounds(wx: Long, wz: Long): Boolean {
+        return if (isInfinite) true else (wx in 0L until sizeX.toLong() && wz in 0L until sizeZ.toLong())
     }
 
-    fun getBlock(wx: Int, wy: Int, wz: Int): BlockType {
-        if (wy !in 0 until sizeY) return BlockType.AIR
-        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+    fun isHorizontalInBounds(wx: Int, wz: Int): Boolean = isHorizontalInBounds(wx.toLong(), wz.toLong())
+
+    fun getBlock(wx: Long, wy: Long, wz: Long): BlockType {
+        if (wy !in 0L until sizeY.toLong()) return BlockType.AIR
+        if (!isInfinite && (wx !in 0L until sizeX.toLong() || wz !in 0L until sizeZ.toLong())) {
             return BlockType.AIR
         }
         val cx = wx shr 4
@@ -218,26 +233,30 @@ class World private constructor(
         val cz = wz shr 4
 
         val chunk = getChunk(cx, cy, cz) ?: return BlockType.AIR
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
         return chunk.getBlock(lx, ly, lz)
     }
+
+    fun getBlock(wx: Int, wy: Int, wz: Int): BlockType = getBlock(wx.toLong(), wy.toLong(), wz.toLong())
 
     fun getBlock(pos: BlockPos): BlockType = getBlock(pos.x, pos.y, pos.z)
 
     /**
      * Returns the authoritative gameplay light (`-16..+16`) at `(wx, wy, wz)`.
      */
-    fun getIntendedLight(wx: Int, wy: Int, wz: Int): Byte {
-        if (wy >= sizeY) return Chunk.MAX_LIGHT.toByte()
-        if (wy < 0) return Chunk.MIN_LIGHT.toByte()
-        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+    fun getIntendedLight(wx: Long, wy: Long, wz: Long): Byte {
+        if (wy >= sizeY.toLong()) return Chunk.MAX_LIGHT.toByte()
+        if (wy < 0L) return Chunk.MIN_LIGHT.toByte()
+        if (!isInfinite && (wx !in 0L until sizeX.toLong() || wz !in 0L until sizeZ.toLong())) {
             return Chunk.MAX_LIGHT.toByte()
         }
         val chunk = getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return Chunk.DEFAULT_AMBIENT_LIGHT.toByte()
-        return chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK).toByte()
+        return chunk.getIntendedLightUnchecked((wx and 15L).toInt(), (wy and 15L).toInt(), (wz and 15L).toInt()).toByte()
     }
+
+    fun getIntendedLight(wx: Int, wy: Int, wz: Int): Byte = getIntendedLight(wx.toLong(), wy.toLong(), wz.toLong())
 
     /**
      * Returns the authoritative gameplay light (`-16..+16`) at [pos].
@@ -247,37 +266,45 @@ class World private constructor(
     /**
      * Returns the visual rendered light (`-16..+16`) at `(wx, wy, wz)`.
      */
-    fun getRenderedLight(wx: Int, wy: Int, wz: Int): Byte {
-        if (wy >= sizeY) return Chunk.MAX_LIGHT.toByte()
-        if (wy < 0) return Chunk.MIN_LIGHT.toByte()
-        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+    fun getRenderedLight(wx: Long, wy: Long, wz: Long): Byte {
+        if (wy >= sizeY.toLong()) return Chunk.MAX_LIGHT.toByte()
+        if (wy < 0L) return Chunk.MIN_LIGHT.toByte()
+        if (!isInfinite && (wx !in 0L until sizeX.toLong() || wz !in 0L until sizeZ.toLong())) {
             return Chunk.MAX_LIGHT.toByte()
         }
         val chunk = getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return Chunk.DEFAULT_AMBIENT_LIGHT.toByte()
-        return chunk.getRenderedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK).toByte()
+        return chunk.getRenderedLightUnchecked((wx and 15L).toInt(), (wy and 15L).toInt(), (wz and 15L).toInt()).toByte()
     }
 
-    fun setBlock(wx: Int, wy: Int, wz: Int, type: BlockType): Boolean {
+    fun getRenderedLight(wx: Int, wy: Int, wz: Int): Byte = getRenderedLight(wx.toLong(), wy.toLong(), wz.toLong())
+
+    fun setBlock(wx: Long, wy: Long, wz: Long, type: BlockType): Boolean {
         if (isDestroyed) return false
-        if (wy !in 0 until sizeY) return false
-        if (!isInfinite && (wx !in 0 until sizeX || wz !in 0 until sizeZ)) {
+        if (wy !in 0L until sizeY.toLong()) return false
+        if (!isInfinite && (wx !in 0L until sizeX.toLong() || wz !in 0L until sizeZ.toLong())) {
             return false
         }
         val cx = wx shr 4
         val cy = wy shr 4
         val cz = wz shr 4
 
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
 
         val targetChunk = synchronized(chunkLock) {
-            val key = packChunkKey(cx, cy, cz)
-            fastChunks.get(key) ?: if (isInfinite) {
-                val pos = ChunkPos(cx, cy, cz)
+            val pos = ChunkPos(cx, cy, cz)
+            val existing = if (canPackChunkKey(cx, cy, cz)) {
+                fastChunks.get(packChunkKey(cx, cy, cz))
+            } else {
+                chunks[pos]
+            }
+            existing ?: if (isInfinite) {
                 Chunk(cx, cy, cz).also { created ->
                     chunks[pos] = created
-                    fastChunks.put(key, created)
+                    if (canPackChunkKey(cx, cy, cz)) {
+                        fastChunks.put(packChunkKey(cx, cy, cz), created)
+                    }
                     chunkTopologyVersion.incrementAndGet()
                 }
             } else {
@@ -291,18 +318,20 @@ class World private constructor(
         if (changed) {
             lightEngine.onBlockChanged(this, wx, wy, wz, oldBlock, type)
 
-            if (lx == 0) getChunk(cx - 1, cy, cz)?.markDirty()
-            if (lx == Chunk.MASK) getChunk(cx + 1, cy, cz)?.markDirty()
+            if (lx == 0) getChunk(cx - 1L, cy, cz)?.markDirty()
+            if (lx == Chunk.MASK) getChunk(cx + 1L, cy, cz)?.markDirty()
 
-            if (ly == 0 && cy > 0) getChunk(cx, cy - 1, cz)?.markDirty()
-            if (ly == Chunk.MASK && cy < chunksY - 1) getChunk(cx, cy + 1, cz)?.markDirty()
+            if (ly == 0 && cy > 0L) getChunk(cx, cy - 1L, cz)?.markDirty()
+            if (ly == Chunk.MASK && cy < chunksY - 1L) getChunk(cx, cy + 1L, cz)?.markDirty()
 
-            if (lz == 0) getChunk(cx, cy, cz - 1)?.markDirty()
-            if (lz == Chunk.MASK) getChunk(cx, cy, cz + 1)?.markDirty()
+            if (lz == 0) getChunk(cx, cy, cz - 1L)?.markDirty()
+            if (lz == Chunk.MASK) getChunk(cx, cy, cz + 1L)?.markDirty()
         }
 
         return changed
     }
+
+    fun setBlock(wx: Int, wy: Int, wz: Int, type: BlockType): Boolean = setBlock(wx.toLong(), wy.toLong(), wz.toLong(), type)
 
     fun setBlock(pos: BlockPos, type: BlockType): Boolean = setBlock(pos.x, pos.y, pos.z, type)
 
@@ -330,22 +359,23 @@ class World private constructor(
             vaporizedChunks.clear()
         }
         prebuiltMeshes.clear()
-        lastStreamCenterCx = Int.MIN_VALUE
-        lastStreamCenterCz = Int.MIN_VALUE
+        lastStreamCenterCx = Long.MIN_VALUE
+        lastStreamCenterCz = Long.MIN_VALUE
         isStreamWindowUpToDate = false
 
-        val centerCx = floor(initialCenterX).toInt() shr 4
-        val centerCz = floor(initialCenterZ).toInt() shr 4
+        val centerCx = floor(initialCenterX).toLong() shr 4
+        val centerCz = floor(initialCenterZ).toLong() shr 4
 
-        for (cx in (centerCx - 1)..(centerCx + 1)) {
-            for (cz in (centerCz - 1)..(centerCz + 1)) {
-                for (cy in chunksY - 1 downTo 0) {
+        for (cx in (centerCx - 1L)..(centerCx + 1L)) {
+            for (cz in (centerCz - 1L)..(centerCz + 1L)) {
+                for (cy in (chunksY - 1).toLong() downTo 0L) {
                     val pos = ChunkPos(cx, cy, cz)
                     val (chunk, restoredEntities) = buildOrLoadChunk(pos)
-                    val key = packChunkKey(cx, cy, cz)
                     synchronized(chunkLock) {
                         chunks[pos] = chunk
-                        fastChunks.put(key, chunk)
+                        if (canPackChunkKey(cx, cy, cz)) {
+                            fastChunks.put(packChunkKey(cx, cy, cz), chunk)
+                        }
                     }
                     lightEngine.initializeChunkLighting(chunk, this)
                     for (entity in restoredEntities) {
@@ -389,7 +419,7 @@ class World private constructor(
                     for (cz in 0 until chunksZ) {
                         val c = Chunk(cx, cy, cz)
                         chunks[ChunkPos(cx, cy, cz)] = c
-                        fastChunks.put(packChunkKey(cx, cy, cz), c)
+                        fastChunks.put(packChunkKey(cx.toLong(), cy.toLong(), cz.toLong()), c)
                     }
                 }
             }
@@ -425,19 +455,25 @@ class World private constructor(
     /**
      * Synchronously ensures a single chunk column at `(cx, cz)` is generated or loaded from disk.
      */
-    fun ensureChunkColumnLoadedSync(cx: Int, cz: Int) {
+    fun ensureChunkColumnLoadedSync(cx: Long, cz: Long) {
         if (!isInfinite) return
         val genStartNs = System.nanoTime()
-        for (cy in chunksY - 1 downTo 0) {
+        for (cy in (chunksY - 1).toLong() downTo 0L) {
             val pos = ChunkPos(cx, cy, cz)
-            val key = packChunkKey(cx, cy, cz)
             val isVaporized = synchronized(chunkLock) { vaporizedChunks.contains(pos) }
             if (!isVaporized && getChunk(cx, cy, cz) == null) {
                 val (chunk, restoredEntities) = buildOrLoadChunk(pos)
                 val inserted = synchronized(chunkLock) {
-                    if (fastChunks.get(key) == null && !vaporizedChunks.contains(pos)) {
+                    val alreadyLoaded = if (canPackChunkKey(cx, cy, cz)) {
+                        fastChunks.get(packChunkKey(cx, cy, cz)) != null
+                    } else {
+                        chunks[pos] != null
+                    }
+                    if (!alreadyLoaded && !vaporizedChunks.contains(pos)) {
                         chunks[pos] = chunk
-                        fastChunks.put(key, chunk)
+                        if (canPackChunkKey(cx, cy, cz)) {
+                            fastChunks.put(packChunkKey(cx, cy, cz), chunk)
+                        }
                         chunkTopologyVersion.incrementAndGet()
                         true
                     } else {
@@ -454,6 +490,9 @@ class World private constructor(
         }
         lastChunkGenMs = (System.nanoTime() - genStartNs) / 1_000_000f
     }
+
+    fun ensureChunkColumnLoadedSync(cx: Int, cz: Int) =
+        ensureChunkColumnLoadedSync(cx.toLong(), cz.toLong())
 
     /**
      * Safely updates [renderDistance] and immediately triggers chunk unloading/loading around the player.
@@ -483,17 +522,18 @@ class World private constructor(
      * Safely removes a chunk at ([cx], [cy], [cz]), cleans up entities inside it, marks adjacent
      * loaded neighbor chunks dirty so boundary faces update, and increments [chunkTopologyVersion].
      */
-    fun vaporizeChunkAt(cx: Int, cy: Int, cz: Int): Boolean {
-        if (cy !in 0 until chunksY) return false
-        if (!isInfinite && (cx !in 0 until chunksX || cz !in 0 until chunksZ)) return false
+    fun vaporizeChunkAt(cx: Long, cy: Long, cz: Long): Boolean {
+        if (cy !in 0L until chunksY.toLong()) return false
+        if (!isInfinite && (cx !in 0L until chunksX.toLong() || cz !in 0L until chunksZ.toLong())) return false
 
         val pos = ChunkPos(cx, cy, cz)
-        val key = packChunkKey(cx, cy, cz)
         val removed = synchronized(chunkLock) {
             prebuiltMeshes.remove(pos)
             vaporizedChunks.add(pos)
             val existing = chunks.remove(pos)
-            fastChunks.remove(key)
+            if (canPackChunkKey(cx, cy, cz)) {
+                fastChunks.remove(packChunkKey(cx, cy, cz))
+            }
             if (existing != null) {
                 chunkTopologyVersion.incrementAndGet()
                 true
@@ -521,15 +561,18 @@ class World private constructor(
             }
         }
 
-        getChunk(cx - 1, cy, cz)?.markDirty()
-        getChunk(cx + 1, cy, cz)?.markDirty()
-        if (cy > 0) getChunk(cx, cy - 1, cz)?.markDirty()
-        if (cy < chunksY - 1) getChunk(cx, cy + 1, cz)?.markDirty()
-        getChunk(cx, cy, cz - 1)?.markDirty()
-        getChunk(cx, cy, cz + 1)?.markDirty()
+        getChunk(cx - 1L, cy, cz)?.markDirty()
+        getChunk(cx + 1L, cy, cz)?.markDirty()
+        if (cy > 0L) getChunk(cx, cy - 1L, cz)?.markDirty()
+        if (cy < chunksY - 1L) getChunk(cx, cy + 1L, cz)?.markDirty()
+        getChunk(cx, cy, cz - 1L)?.markDirty()
+        getChunk(cx, cy, cz + 1L)?.markDirty()
 
         return removed
     }
+
+    fun vaporizeChunkAt(cx: Int, cy: Int, cz: Int): Boolean =
+        vaporizeChunkAt(cx.toLong(), cy.toLong(), cz.toLong())
 
     /**
      * Streams chunks around `(playerX, playerZ)` within [renderDistance]:
@@ -545,8 +588,8 @@ class World private constructor(
     ): Job? {
         if (!isInfinite || isDestroyed) return null
 
-        val centerCx = floor(playerX).toInt() shr 4
-        val centerCz = floor(playerZ).toInt() shr 4
+        val centerCx = floor(playerX).toLong() shr 4
+        val centerCz = floor(playerZ).toLong() shr 4
         val currentEpoch: Long
         synchronized(streamControlLock) {
             if (isDestroyed) return null
@@ -573,7 +616,9 @@ class World private constructor(
                 val pos = entry.key
                 if (abs(pos.x - centerCx) > renderDistance || abs(pos.z - centerCz) > renderDistance) {
                     unloadedChunks.add(pos to entry.value)
-                    fastChunks.remove(packChunkKey(pos.x, pos.y, pos.z))
+                    if (canPackChunkKey(pos.x, pos.y, pos.z)) {
+                        fastChunks.remove(packChunkKey(pos.x, pos.y, pos.z))
+                    }
                     iterator.remove()
                     prebuiltMeshes.remove(pos)
                 }
@@ -627,16 +672,21 @@ class World private constructor(
         }
 
         // 2. Collect missing chunk columns sorted nearest-first to player
-        val missingColumns = mutableListOf<Pair<Int, Int>>()
+        val missingColumns = mutableListOf<Pair<Long, Long>>()
         synchronized(chunkLock) {
             val hasVaporized = vaporizedChunks.isNotEmpty()
             for (cx in (centerCx - renderDistance)..(centerCx + renderDistance)) {
                 for (cz in (centerCz - renderDistance)..(centerCz + renderDistance)) {
                     var columnNeedsLoad = false
-                    for (cy in 0 until chunksY) {
-                        val key = packChunkKey(cx, cy, cz)
-                        if (fastChunks.get(key) == null) {
-                            if (!hasVaporized || !vaporizedChunks.contains(ChunkPos(cx, cy, cz))) {
+                    for (cy in 0L until chunksY.toLong()) {
+                        val pos = ChunkPos(cx, cy, cz)
+                        val loaded = if (canPackChunkKey(cx, cy, cz)) {
+                            fastChunks.get(packChunkKey(cx, cy, cz)) != null
+                        } else {
+                            chunks[pos] != null
+                        }
+                        if (!loaded) {
+                            if (!hasVaporized || !vaporizedChunks.contains(pos)) {
                                 columnNeedsLoad = true
                                 break
                             }
@@ -661,8 +711,8 @@ class World private constructor(
         }
 
         missingColumns.sortBy { (cx, cz) ->
-            val dx = cx - centerCx
-            val dz = cz - centerCz
+            val dx = (cx - centerCx).toDouble()
+            val dz = (cz - centerCz).toDouble()
             dx * dx + dz * dz
         }
 
@@ -683,15 +733,22 @@ class World private constructor(
                     val colGenStartNs = System.nanoTime()
                     val builtColumn = ArrayList<Pair<ChunkPos, Pair<Chunk, List<Entity>>>>(chunksY)
                     val columnChunks = arrayOfNulls<Chunk>(chunksY)
-                    for (cy in chunksY - 1 downTo 0) {
+                    for (cyInt in chunksY - 1 downTo 0) {
                         if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
+                        val cy = cyInt.toLong()
                         val pos = ChunkPos(cx, cy, cz)
-                        val key = packChunkKey(cx, cy, cz)
-                        val skip = synchronized(chunkLock) { fastChunks.get(key) != null || vaporizedChunks.contains(pos) }
+                        val skip = synchronized(chunkLock) {
+                            val loaded = if (canPackChunkKey(cx, cy, cz)) {
+                                fastChunks.get(packChunkKey(cx, cy, cz)) != null
+                            } else {
+                                chunks[pos] != null
+                            }
+                            loaded || vaporizedChunks.contains(pos)
+                        }
                         if (skip) continue
                         val built = buildOrLoadChunk(pos)
                         builtColumn.add(pos to built)
-                        columnChunks[cy] = built.first
+                        columnChunks[cyInt] = built.first
                     }
                     if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch || builtColumn.isEmpty()) continue
 
@@ -699,7 +756,7 @@ class World private constructor(
                     for ((_, built) in builtColumn) {
                         if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) break
                         lightEngine.initializeChunkLighting(built.first, this@World) { lx, ly, lz ->
-                            if (lx == cx && lz == cz && ly in 0 until chunksY) columnChunks[ly] else getChunk(lx, ly, lz)
+                            if (lx == cx && lz == cz && ly in 0L until chunksY.toLong()) columnChunks[ly.toInt()] else getChunk(lx, ly, lz)
                         }
                     }
                     if (!isActive || isDestroyed || streamEpoch.get() != currentEpoch) continue
@@ -717,10 +774,16 @@ class World private constructor(
                         ) {
                             for ((pos, built) in builtColumn) {
                                 val (chunk, restoredEntities) = built
-                                val key = packChunkKey(pos.x, pos.y, pos.z)
-                                if (fastChunks.get(key) == null && !vaporizedChunks.contains(pos)) {
+                                val alreadyLoaded = if (canPackChunkKey(pos.x, pos.y, pos.z)) {
+                                    fastChunks.get(packChunkKey(pos.x, pos.y, pos.z)) != null
+                                } else {
+                                    chunks[pos] != null
+                                }
+                                if (!alreadyLoaded && !vaporizedChunks.contains(pos)) {
                                     chunks[pos] = chunk
-                                    fastChunks.put(key, chunk)
+                                    if (canPackChunkKey(pos.x, pos.y, pos.z)) {
+                                        fastChunks.put(packChunkKey(pos.x, pos.y, pos.z), chunk)
+                                    }
                                     insertedChunks.add(pos to chunk)
                                     asyncGeneratedChunksCount.incrementAndGet()
                                     if (restoredEntities.isNotEmpty()) {
@@ -743,10 +806,10 @@ class World private constructor(
                     // Mark adjacent loaded non-empty neighbor chunks dirty so cross-chunk faces update cleanly
                     for ((pos, _) in insertedChunks) {
                         val cy = pos.y
-                        getChunk(cx - 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
-                        getChunk(cx + 1, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
-                        getChunk(cx, cy, cz - 1)?.let { if (!it.isEmpty) it.markDirty() }
-                        getChunk(cx, cy, cz + 1)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx - 1L, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx + 1L, cy, cz)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx, cy, cz - 1L)?.let { if (!it.isEmpty) it.markDirty() }
+                        getChunk(cx, cy, cz + 1L)?.let { if (!it.isEmpty) it.markDirty() }
                     }
 
                     // Optional experimental off-thread CPU chunk mesh prebuilding (disabled by default via Debug Options)
@@ -811,25 +874,27 @@ class World private constructor(
         }
         prebuiltMeshes.clear()
         synchronized(streamControlLock) {
-            lastStreamCenterCx = Int.MIN_VALUE
-            lastStreamCenterCz = Int.MIN_VALUE
+            lastStreamCenterCx = Long.MIN_VALUE
+            lastStreamCenterCz = Long.MIN_VALUE
         }
     }
 
-    fun getSurfaceHeight(wx: Int, wz: Int): Int {
+    fun getSurfaceHeight(wx: Long, wz: Long): Int {
         if (isInfinite) {
             val cx = wx shr 4
             val cz = wz shr 4
             ensureChunkColumnLoadedSync(cx, cz)
         }
-        for (wy in sizeY - 1 downTo 0) {
+        for (wy in (sizeY - 1).toLong() downTo 0L) {
             val block = getBlock(wx, wy, wz)
             if (block.isSolid || block.isTransparent) {
-                return wy
+                return wy.toInt()
             }
         }
         return 0
     }
+
+    fun getSurfaceHeight(wx: Int, wz: Int): Int = getSurfaceHeight(wx.toLong(), wz.toLong())
 
     /**
      * Raycasts through the voxel grid from an origin along a direction vector.
@@ -842,31 +907,31 @@ class World private constructor(
     ): RaycastHit? {
         if (dirX == 0.0 && dirY == 0.0 && dirZ == 0.0) return null
 
-        var x = floor(originX).toInt()
-        var y = floor(originY).toInt()
-        var z = floor(originZ).toInt()
+        var x = floor(originX).toLong()
+        var y = floor(originY).toLong()
+        var z = floor(originZ).toLong()
 
-        val stepX = if (dirX > 0.0) 1 else if (dirX < 0.0) -1 else 0
-        val stepY = if (dirY > 0.0) 1 else if (dirY < 0.0) -1 else 0
-        val stepZ = if (dirZ > 0.0) 1 else if (dirZ < 0.0) -1 else 0
+        val stepX = if (dirX > 0.0) 1L else if (dirX < 0.0) -1L else 0L
+        val stepY = if (dirY > 0.0) 1L else if (dirY < 0.0) -1L else 0L
+        val stepZ = if (dirZ > 0.0) 1L else if (dirZ < 0.0) -1L else 0L
 
-        val tDeltaX = if (stepX != 0) abs(1.0 / dirX) else Double.MAX_VALUE
-        val tDeltaY = if (stepY != 0) abs(1.0 / dirY) else Double.MAX_VALUE
-        val tDeltaZ = if (stepZ != 0) abs(1.0 / dirZ) else Double.MAX_VALUE
+        val tDeltaX = if (stepX != 0L) abs(1.0 / dirX) else Double.MAX_VALUE
+        val tDeltaY = if (stepY != 0L) abs(1.0 / dirY) else Double.MAX_VALUE
+        val tDeltaZ = if (stepZ != 0L) abs(1.0 / dirZ) else Double.MAX_VALUE
 
         var tMaxX = when {
-            stepX > 0 -> (x + 1.0 - originX) * tDeltaX
-            stepX < 0 -> (originX - x.toDouble()) * tDeltaX
+            stepX > 0L -> (x + 1.0 - originX) * tDeltaX
+            stepX < 0L -> (originX - x.toDouble()) * tDeltaX
             else -> Double.MAX_VALUE
         }
         var tMaxY = when {
-            stepY > 0 -> (y + 1.0 - originY) * tDeltaY
-            stepY < 0 -> (originY - y.toDouble()) * tDeltaY
+            stepY > 0L -> (y + 1.0 - originY) * tDeltaY
+            stepY < 0L -> (originY - y.toDouble()) * tDeltaY
             else -> Double.MAX_VALUE
         }
         var tMaxZ = when {
-            stepZ > 0 -> (z + 1.0 - originZ) * tDeltaZ
-            stepZ < 0 -> (originZ - z.toDouble()) * tDeltaZ
+            stepZ > 0L -> (z + 1.0 - originZ) * tDeltaZ
+            stepZ < 0L -> (originZ - z.toDouble()) * tDeltaZ
             else -> Double.MAX_VALUE
         }
 
@@ -889,24 +954,24 @@ class World private constructor(
                     distance = tMaxX
                     x += stepX
                     tMaxX += tDeltaX
-                    hitFace = if (stepX > 0) Direction.WEST else Direction.EAST
+                    hitFace = if (stepX > 0L) Direction.WEST else Direction.EAST
                 } else {
                     distance = tMaxZ
                     z += stepZ
                     tMaxZ += tDeltaZ
-                    hitFace = if (stepZ > 0) Direction.NORTH else Direction.SOUTH
+                    hitFace = if (stepZ > 0L) Direction.NORTH else Direction.SOUTH
                 }
             } else {
                 if (tMaxY < tMaxZ) {
                     distance = tMaxY
                     y += stepY
                     tMaxY += tDeltaY
-                    hitFace = if (stepY > 0) Direction.DOWN else Direction.UP
+                    hitFace = if (stepY > 0L) Direction.DOWN else Direction.UP
                 } else {
                     distance = tMaxZ
                     z += stepZ
                     tMaxZ += tDeltaZ
-                    hitFace = if (stepZ > 0) Direction.NORTH else Direction.SOUTH
+                    hitFace = if (stepZ > 0L) Direction.NORTH else Direction.SOUTH
                 }
             }
         }
@@ -1067,18 +1132,25 @@ class World private constructor(
         const val MAX_PREBUILT_MESHES: Int = 48
 
         fun chunkEntityPos(entity: Entity, chunksY: Int): ChunkPos {
-            val cx = floor(entity.position.x).toInt() shr 4
-            val cy = (floor(entity.position.y).toInt() shr 4).coerceIn(0, (chunksY - 1).coerceAtLeast(0))
-            val cz = floor(entity.position.z).toInt() shr 4
+            val cx = floor(entity.position.x).toLong() shr 4
+            val cy = (floor(entity.position.y).toLong() shr 4).coerceIn(0L, (chunksY - 1).coerceAtLeast(0).toLong())
+            val cz = floor(entity.position.z).toLong() shr 4
             return ChunkPos(cx, cy, cz)
         }
 
         @Suppress("NOTHING_TO_INLINE")
-        internal inline fun packChunkKey(cx: Int, cy: Int, cz: Int): Long {
+        internal inline fun canPackChunkKey(cx: Long, cy: Long, cz: Long): Boolean {
+            return cx in -0x8000000L..0x7FFFFFFL &&
+                cz in -0x8000000L..0x7FFFFFFL &&
+                cy in 0L..255L
+        }
+
+        @Suppress("NOTHING_TO_INLINE")
+        internal inline fun packChunkKey(cx: Long, cy: Long, cz: Long): Long {
             // 28 bits signed cx (+-134M chunks = +-2.14B blocks), 28 bits signed cz, 8 bits cy (0..255)
-            return ((cx.toLong() and 0xFFFFFFFL) shl 36) or
-                ((cz.toLong() and 0xFFFFFFFL) shl 8) or
-                (cy.toLong() and 0xFFL)
+            return ((cx and 0xFFFFFFFL) shl 36) or
+                ((cz and 0xFFFFFFFL) shl 8) or
+                (cy and 0xFFL)
         }
     }
 }

@@ -136,10 +136,10 @@ open class ItemDropEntity(
         val stepDt = dt / steps
 
         val eps = 1e-6
-        val minBx = floor(position.x - HALF_WIDTH_D + eps).toInt()
-        val maxBx = floor(position.x + HALF_WIDTH_D - eps).toInt()
-        val minBz = floor(position.z - HALF_DEPTH_D + eps).toInt()
-        val maxBz = floor(position.z + HALF_DEPTH_D - eps).toInt()
+        val minBx = floor(position.x - HALF_WIDTH_D + eps).toLong()
+        val maxBx = floor(position.x + HALF_WIDTH_D - eps).toLong()
+        val minBz = floor(position.z - HALF_DEPTH_D + eps).toLong()
+        val maxBz = floor(position.z + HALF_DEPTH_D - eps).toLong()
 
         for (step in 0 until steps) {
             if (isRemoved) break
@@ -174,10 +174,10 @@ open class ItemDropEntity(
         world: World,
         prevMinY: Double,
         prevMaxY: Double,
-        minBx: Int,
-        maxBx: Int,
-        minBz: Int,
-        maxBz: Int
+        minBx: Long,
+        maxBx: Long,
+        minBz: Long,
+        maxBz: Long
     ) {
         val eps = 1e-6
         val curMinY = position.y
@@ -195,7 +195,7 @@ open class ItemDropEntity(
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
                     for (by in maxBy downTo minBy) {
-                        val block = world.getBlock(bx, by, bz)
+                        val block = world.getBlock(bx, by.toLong(), bz)
                         if (!isBlockSolid(block)) continue
 
                         val blockTopY = by + 1.0
@@ -221,7 +221,7 @@ open class ItemDropEntity(
             for (bx in minBx..maxBx) {
                 for (bz in minBz..maxBz) {
                     for (by in minBy..maxBy) {
-                        val block = world.getBlock(bx, by, bz)
+                        val block = world.getBlock(bx, by.toLong(), bz)
                         if (!isBlockSolid(block)) continue
 
                         val blockBottomY = by.toDouble()

@@ -31,7 +31,7 @@ class DataDrivenWorldGenPass(
         val passSeed = world.seed + definition.id.hashCode().toLong()
         for (ly in 0 until Chunk.SIZE) {
             val wy = baseY + ly
-            if (wy !in definition.minY..definition.maxY) continue
+            if (wy !in definition.minY.toLong()..definition.maxY.toLong()) continue
             for (lz in 0 until Chunk.SIZE) {
                 val wz = baseZ + lz
                 for (lx in 0 until Chunk.SIZE) {

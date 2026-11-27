@@ -416,13 +416,13 @@ class WorldScene : IGameScene {
                 hit.blockPos.z shr 4
             )
         } else {
-            val px = kotlin.math.floor(player.posX).toInt() shr 4
-            val pz = kotlin.math.floor(player.posZ).toInt() shr 4
-            var py = (kotlin.math.floor(player.posY - 0.1).toInt() shr 4).coerceIn(0, world.chunksY - 1)
-            while (py >= 0 && world.getChunk(px, py, pz)?.isEmpty != false) {
+            val px = kotlin.math.floor(player.posX).toLong() shr 4
+            val pz = kotlin.math.floor(player.posZ).toLong() shr 4
+            var py = (kotlin.math.floor(player.posY - 0.1).toLong() shr 4).coerceIn(0L, (world.chunksY - 1).toLong())
+            while (py >= 0L && world.getChunk(px, py, pz)?.isEmpty != false) {
                 py--
             }
-            if (py < 0) return null
+            if (py < 0L) return null
             com.nitrous.tessellate.world.ChunkPos(px, py, pz)
         }
         val removed = world.vaporizeChunkAt(targetPos.x, targetPos.y, targetPos.z)
@@ -735,9 +735,9 @@ class WorldScene : IGameScene {
         if (!isHoldingGreener()) return false
         val pos = hit.blockPos
         val chunk = world.getChunk(pos.x shr 4, pos.y shr 4, pos.z shr 4) ?: return false
-        val lx = pos.x and Chunk.MASK
-        val ly = pos.y and Chunk.MASK
-        val lz = pos.z and Chunk.MASK
+        val lx = (pos.x and Chunk.MASK.toLong()).toInt()
+        val ly = (pos.y and Chunk.MASK.toLong()).toInt()
+        val lz = (pos.z and Chunk.MASK.toLong()).toInt()
         if (chunk.getBlock(lx, ly, lz) == BlockType.AIR) return false
 
         val localIndex = chunk.getBlockIndex(lx, ly, lz)

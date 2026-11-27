@@ -22,19 +22,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.SyncFailedException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Unified, single-queue disk I/O coordinator for world saves (`level.json`, `chunks/c_X_Y_Z.bin`,
- * `chunks/masters/<sha256>.bin`, and `entities/c_X_Y_Z.json`).
+ * Unified, single-queue disk I/O coordinator for world saves (`level.json`, Base36 `chunks/c_X_Y_Z.bin`,
+ * `chunks/masters/<sha256>.bin`, `chunks/c_X_Y_Z.data`, and Base36 `entities/c_X_Y_Z.json`).
  *
  * Implements `:core`'s [WorldChunkStorage] contract (`World -> WorldChunkStorage -> WorldSaveManager -> Disk`)
  * and routes every write (chunk unloads, pause/autosave snapshots, level metadata, master deduplication,
  * orphaned master cleanup, and blocking save-and-quit flushes) through a single sequential
- * [Dispatchers.IO] coroutine queue with per-chunk request overwriting/debouncing.
+ * [Dispatchers.IO] coroutine queue with per-chunk request overwriting/debouncing and atomic `.tmp` writes.
  */
 class WorldSaveManager(
     val worldDir: File,
@@ -55,6 +58,20 @@ class WorldSaveManager(
     private val fileLocks = ConcurrentHashMap<ChunkPos, Any>()
     private val masterLock = Any()
     private val levelLock = Any()
+    private val migrationLock = Any()
+
+    /**
+     * Optional test hook invoked during [writeBytesAtomically] after syncing the `.tmp` file and before
+     * renaming it to the target file. Allows deterministic simulation of write failures without partial writes.
+     */
+    @Volatile
+    internal var testAtomicWriteStageHook: ((targetFile: File, tmpFile: File) -> Unit)? = null
+
+    /**
+     * Optional test hook invoked at named stages of [migrateLegacyChunkFilenames] to verify crash recovery.
+     */
+    @Volatile
+    internal var testMigrationStageHook: ((stage: String) -> Unit)? = null
 
     private data class PendingChunkWrite(val version: Long, val bytes: ByteArray?)
     private data class PendingBlockDataWrite(val version: Long, val blockData: Map<Int, Map<String, TypedValue>>)
@@ -83,6 +100,26 @@ class WorldSaveManager(
         val preScanHook: (() -> Unit)? = null
     )
 
+    data class MigrationReport(
+        val migratedCount: Int = 0,
+        val unchangedCount: Int = 0,
+        val collisionsSkipped: Int = 0,
+        val recoveredFromJournal: Boolean = false,
+        val alreadyMigrated: Boolean = false
+    )
+
+    internal data class MigrationJournalEntry(
+        val dirType: String,
+        val sourceName: String,
+        val targetName: String,
+        val sha256Hex: String
+    )
+
+    internal data class MigrationJournal(
+        val phase: String,
+        val entries: List<MigrationJournalEntry> = emptyList()
+    )
+
     private val writeVersionGen = AtomicLong(0L)
     private val pendingChunkWrites = ConcurrentHashMap<ChunkPos, PendingChunkWrite>()
     private val pendingBlockDataWrites = ConcurrentHashMap<ChunkPos, PendingBlockDataWrite>()
@@ -100,13 +137,19 @@ class WorldSaveManager(
     var lastSaveJob: Job? = null
         private set
 
-    fun chunkFileFor(pos: ChunkPos): File = File(chunksDir, "c_${pos.x}_${pos.y}_${pos.z}.bin")
+    fun chunkFileFor(pos: ChunkPos): File =
+        File(chunksDir, ChunkFilenameCodec.encodeChunkFilename(pos))
 
-    fun chunkDataFileFor(pos: ChunkPos): File = File(chunksDir, "c_${pos.x}_${pos.y}_${pos.z}.data")
+    fun chunkDataFileFor(pos: ChunkPos): File =
+        File(chunksDir, ChunkFilenameCodec.encodeBlockDataFilename(pos))
 
     fun masterFileFor(hashHex: String): File = File(mastersDir, "$hashHex.bin")
 
-    fun entityFileFor(pos: ChunkPos): File = File(entitiesDir, "c_${pos.x}_${pos.y}_${pos.z}.json")
+    fun entityFileFor(pos: ChunkPos): File =
+        File(entitiesDir, ChunkFilenameCodec.encodeEntityFilename(pos))
+
+    private fun markerFile(): File = File(chunksDir, BASE36_MIGRATED_MARKER)
+    private fun journalFile(): File = File(chunksDir, MIGRATION_JOURNAL_NAME)
 
     private fun ensureDirectoriesExist() {
         if (!worldDir.exists()) worldDir.mkdirs()
@@ -116,6 +159,319 @@ class WorldSaveManager(
     }
 
     private fun lockFor(pos: ChunkPos): Any = fileLocks.computeIfAbsent(pos) { Any() }
+
+    /**
+     * Migrates legacy decimal chunk/sidecar/entity filenames (`c_<decX>_<decY>_<decZ>.(bin|data|json)`)
+     * to canonical uppercase Base36 (`ChunkFilenameCodec`), safely handling negative coordinates,
+     * cyclic renames (e.g., `c_10_0_0 -> c_A_0_0` alongside `c_36_0_0 -> c_10_0_0`), crash recovery via
+     * an atomic journal, and target collision protection without silently overwriting data.
+     */
+    fun migrateLegacyChunkFilenames(): MigrationReport = synchronized(migrationLock) {
+        val journal = journalFile()
+        val marker = markerFile()
+
+        // If a journal is present, finish recovering any interrupted Phase 2 commit first.
+        if (journal.exists() && journal.isFile) {
+            val recovered = recoverFromMigrationJournal(journal)
+            if (recovered != null) {
+                return recovered
+            }
+        }
+
+        if (marker.exists() && marker.isFile) {
+            cleanupStrayMigTmpFiles()
+            return MigrationReport(alreadyMigrated = true)
+        }
+
+        val hasChunks = chunksDir.exists() && chunksDir.isDirectory
+        val hasEntities = entitiesDir.exists() && entitiesDir.isDirectory
+        if (!hasChunks && !hasEntities) {
+            return MigrationReport()
+        }
+
+        // Remove any orphaned Phase-1 staging files from an interrupted pre-journal attempt.
+        cleanupStrayMigTmpFiles()
+
+        data class Candidate(
+            val dirType: String,
+            val dir: File,
+            val sourceFile: File,
+            val sourceName: String,
+            val targetName: String,
+            val sha256Hex: String
+        )
+
+        val candidates = ArrayList<Candidate>()
+        val sourceNamesByDirType = HashMap<String, HashSet<String>>()
+        var unchangedCount = 0
+
+        fun collectDir(dirType: String, dir: File, allowedExts: Set<String>) {
+            if (!dir.exists() || !dir.isDirectory) return
+            val files = dir.listFiles() ?: return
+            for (f in files) {
+                if (!f.isFile) continue
+                val name = f.name
+                if (isAuxiliaryOrTempName(name)) continue
+                val legacy = ChunkFilenameCodec.decodeLegacyDecimalFilename(name) ?: continue
+                if (!allowedExts.contains(legacy.extension)) continue
+
+                if (name == legacy.canonicalName) {
+                    unchangedCount++
+                    continue
+                }
+                val digest = OsmiumCodec.sha256Hex(OsmiumCodec.sha256Bytes(f.readBytes()))
+                candidates.add(
+                    Candidate(
+                        dirType = dirType,
+                        dir = dir,
+                        sourceFile = f,
+                        sourceName = name,
+                        targetName = legacy.canonicalName,
+                        sha256Hex = digest
+                    )
+                )
+                sourceNamesByDirType.getOrPut(dirType) { HashSet() }.add(name)
+            }
+        }
+
+        collectDir(DIR_TYPE_CHUNKS, chunksDir, setOf(ChunkFilenameCodec.EXT_BIN, ChunkFilenameCodec.EXT_DATA))
+        collectDir(DIR_TYPE_ENTITIES, entitiesDir, setOf(ChunkFilenameCodec.EXT_JSON))
+
+        if (candidates.isEmpty()) {
+            // Check if there are any chunk/entity files at all before writing marker
+            val anyRealFiles = hasAnyChunkOrEntityFiles(chunksDir) || hasAnyChunkOrEntityFiles(entitiesDir)
+            if (anyRealFiles) {
+                if (!chunksDir.exists()) chunksDir.mkdirs()
+                writeTextAtomically(marker, "v1\n")
+            }
+            return MigrationReport(unchangedCount = unchangedCount)
+        }
+
+        // Partition safe moves vs true collisions (target exists on disk and is NOT queued to vacate)
+        val safeMoves = ArrayList<Candidate>(candidates.size)
+        var collisionsSkipped = 0
+        for (c in candidates) {
+            val targetFile = File(c.dir, c.targetName)
+            val movingSet = sourceNamesByDirType[c.dirType].orEmpty()
+            if (targetFile.exists() && !movingSet.contains(c.targetName)) {
+                Log.w(
+                    TAG,
+                    "Base36 migration collision: keeping both legacy '${c.sourceName}' and existing '${c.targetName}' in ${c.dirType}"
+                )
+                collisionsSkipped++
+            } else {
+                safeMoves.add(c)
+            }
+        }
+
+        if (safeMoves.isEmpty()) {
+            return MigrationReport(
+                migratedCount = 0,
+                unchangedCount = unchangedCount,
+                collisionsSkipped = collisionsSkipped
+            )
+        }
+
+        // Phase 1: Stage verified copies to <target>.migtmp while all sources remain untouched
+        for (m in safeMoves) {
+            val migTmp = File(m.dir, "${m.targetName}$MIG_TMP_SUFFIX")
+            val bytes = m.sourceFile.readBytes()
+            writeBytesAtomicallyRaw(migTmp, bytes)
+            val copiedHash = OsmiumCodec.sha256Hex(OsmiumCodec.sha256Bytes(migTmp.readBytes()))
+            if (copiedHash != m.sha256Hex) {
+                throw IOException("Migration staging SHA-256 mismatch for ${m.sourceName}")
+            }
+        }
+        testMigrationStageHook?.invoke("PHASE1_AFTER_STAGING")
+
+        // Persist atomic journal before mutating any source/target filenames
+        val journalEntries = safeMoves.map {
+            MigrationJournalEntry(
+                dirType = it.dirType,
+                sourceName = it.sourceName,
+                targetName = it.targetName,
+                sha256Hex = it.sha256Hex
+            )
+        }
+        if (!chunksDir.exists()) chunksDir.mkdirs()
+        writeTextAtomically(
+            journal,
+            migrationJournalAdapter.toJson(MigrationJournal(phase = PHASE_STAGING_COMPLETE, entries = journalEntries))
+        )
+        testMigrationStageHook?.invoke("PHASE2_AFTER_JOURNAL")
+
+        val migrated = commitMigrationJournal(journalEntries, journal, unchangedCount, collisionsSkipped, recovered = false)
+        return migrated
+    }
+
+    private fun commitMigrationJournal(
+        entries: List<MigrationJournalEntry>,
+        journal: File,
+        unchangedCount: Int,
+        collisionsSkipped: Int,
+        recovered: Boolean
+    ): MigrationReport {
+        val currentPhase = parseMigrationJournal(journal)?.phase ?: PHASE_STAGING_COMPLETE
+
+        if (currentPhase == PHASE_STAGING_COMPLETE) {
+            // Step 2a: Move every source file to <source>.migorig BEFORE touching any target name.
+            // This eliminates all cyclic rename hazards (e.g., 36 -> 10 -> A).
+            for (e in entries) {
+                val dir = dirForType(e.dirType)
+                val source = File(dir, e.sourceName)
+                val orig = File(dir, "${e.sourceName}$MIG_ORIG_SUFFIX")
+                if (!orig.exists() && source.exists()) {
+                    if (!renameReplacing(source, orig)) {
+                        throw IOException("Failed moving ${source.name} to ${orig.name}")
+                    }
+                }
+            }
+            testMigrationStageHook?.invoke("PHASE2_AFTER_ORIG")
+
+            writeTextAtomically(
+                journal,
+                migrationJournalAdapter.toJson(MigrationJournal(phase = PHASE_PROMOTING_TARGETS, entries = entries))
+            )
+            testMigrationStageHook?.invoke("PHASE2_PROMOTING_JOURNAL")
+        }
+
+        // Step 2b: Promote every <target>.migtmp -> <target>, verifying SHA-256 integrity
+        for ((idx, e) in entries.withIndex()) {
+            val dir = dirForType(e.dirType)
+            val target = File(dir, e.targetName)
+            val migTmp = File(dir, "${e.targetName}$MIG_TMP_SUFFIX")
+            val orig = File(dir, "${e.sourceName}$MIG_ORIG_SUFFIX")
+
+            if (migTmp.exists()) {
+                val stagedHash = OsmiumCodec.sha256Hex(OsmiumCodec.sha256Bytes(migTmp.readBytes()))
+                if (stagedHash != e.sha256Hex) {
+                    throw IOException("Staged migration file corrupted for ${e.targetName}")
+                }
+                if (!renameReplacing(migTmp, target)) {
+                    throw IOException("Failed promoting ${migTmp.name} to ${target.name}")
+                }
+            } else if (!target.exists() && orig.exists()) {
+                val origBytes = orig.readBytes()
+                writeBytesAtomically(target, origBytes)
+            }
+
+            if (idx == 0) {
+                testMigrationStageHook?.invoke("PHASE2_MID_TARGET_RENAME")
+            }
+        }
+
+        // Step 2c: Verify all targets exist and match recorded hashes, then finalize & cleanup backups
+        for (e in entries) {
+            val dir = dirForType(e.dirType)
+            val target = File(dir, e.targetName)
+            if (!target.exists()) {
+                throw IOException("Target missing after migration commit: ${target.name}")
+            }
+            val actualHash = OsmiumCodec.sha256Hex(OsmiumCodec.sha256Bytes(target.readBytes()))
+            if (actualHash != e.sha256Hex) {
+                throw IOException("Target hash mismatch after migration commit: ${target.name}")
+            }
+        }
+
+        if (collisionsSkipped == 0) {
+            if (!chunksDir.exists()) chunksDir.mkdirs()
+            writeTextAtomically(markerFile(), "v1\n")
+        }
+
+        for (e in entries) {
+            val dir = dirForType(e.dirType)
+            File(dir, "${e.sourceName}$MIG_ORIG_SUFFIX").takeIf { it.exists() }?.delete()
+            File(dir, "${e.targetName}$MIG_TMP_SUFFIX").takeIf { it.exists() }?.delete()
+        }
+        if (journal.exists()) {
+            journal.delete()
+        }
+
+        return MigrationReport(
+            migratedCount = entries.size,
+            unchangedCount = unchangedCount,
+            collisionsSkipped = collisionsSkipped,
+            recoveredFromJournal = recovered,
+            alreadyMigrated = false
+        )
+    }
+
+    private fun recoverFromMigrationJournal(journal: File): MigrationReport? {
+        val parsed = parseMigrationJournal(journal) ?: run {
+            journal.delete()
+            cleanupStrayMigTmpFiles()
+            return null
+        }
+        return if (parsed.entries.isEmpty()) {
+            journal.delete()
+            cleanupStrayMigTmpFiles()
+            null
+        } else {
+            commitMigrationJournal(
+                entries = parsed.entries,
+                journal = journal,
+                unchangedCount = 0,
+                collisionsSkipped = 0,
+                recovered = true
+            )
+        }
+    }
+
+    private fun parseMigrationJournal(file: File): MigrationJournal? {
+        return try {
+            val text = file.readText()
+            if (text.isBlank()) null else migrationJournalAdapter.fromJson(text)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse migration journal", e)
+            null
+        }
+    }
+
+    private fun dirForType(dirType: String): File = when (dirType) {
+        DIR_TYPE_ENTITIES -> entitiesDir
+        else -> chunksDir
+    }
+
+    private fun cleanupStrayMigTmpFiles() {
+        listOf(chunksDir, entitiesDir).forEach { dir ->
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { f ->
+                    if (f.isFile && (f.name.endsWith(MIG_TMP_SUFFIX) || f.name.endsWith(TEMP_SUFFIX))) {
+                        f.delete()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun hasAnyChunkOrEntityFiles(dir: File): Boolean {
+        if (!dir.exists() || !dir.isDirectory) return false
+        val files = dir.listFiles() ?: return false
+        for (f in files) {
+            if (f.isFile && !isAuxiliaryOrTempName(f.name) && f.name.startsWith(ChunkFilenameCodec.PREFIX)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun ensureBase36Migrated() {
+        val marker = markerFile()
+        val journal = journalFile()
+        if (marker.exists() && !journal.exists()) return
+        migrateLegacyChunkFilenames()
+    }
+
+    private fun markBase36DirectoryActive() {
+        val marker = markerFile()
+        if (!marker.exists() && !journalFile().exists()) {
+            synchronized(migrationLock) {
+                if (!marker.exists() && !journalFile().exists()) {
+                    writeTextAtomically(marker, "v1\n")
+                }
+            }
+        }
+    }
 
     /**
      * Queues an async [Dispatchers.IO] write for a chunk's block data and its entities JSON file
@@ -257,6 +613,7 @@ class WorldSaveManager(
             } else if (chunkTask != null) {
                 val task = chunkTask!!
                 try {
+                    ensureBase36Migrated()
                     val ok = writeChunkAndEntitiesInternal(
                         task.pos,
                         task.bytesCopy,
@@ -283,6 +640,7 @@ class WorldSaveManager(
                 val task = cleanupTask!!
                 var completedCleanly = false
                 try {
+                    ensureBase36Migrated()
                     completedCleanly = runSafeMasterCleanup(task)
                 } catch (e: CancellationException) {
                     task.deferred.complete(false)
@@ -331,7 +689,9 @@ class WorldSaveManager(
                 Log.w(TAG, "Orphaned master cleanup interrupted during scan; aborting safely.")
                 return false
             }
-            if (!entry.isFile || !entry.name.endsWith(".bin")) continue
+            if (!entry.isFile || !entry.name.endsWith(ChunkFilenameCodec.EXT_BIN) || isAuxiliaryOrTempName(entry.name)) {
+                continue
+            }
 
             try {
                 FileInputStream(entry).use { fis ->
@@ -363,8 +723,10 @@ class WorldSaveManager(
                 Log.w(TAG, "Orphaned master cleanup interrupted during prune; aborting remaining deletions.")
                 return false
             }
-            if (!master.isFile || !master.name.endsWith(".bin")) continue
-            val hashHex = master.name.removeSuffix(".bin")
+            if (!master.isFile || !master.name.endsWith(ChunkFilenameCodec.EXT_BIN) || isAuxiliaryOrTempName(master.name)) {
+                continue
+            }
+            val hashHex = master.name.removeSuffix(ChunkFilenameCodec.EXT_BIN)
             if (!referencedHashes.contains(hashHex)) {
                 master.delete()
             }
@@ -375,7 +737,7 @@ class WorldSaveManager(
     private fun writeLevelDataInternal(normalized: WorldSaveData): Boolean = synchronized(levelLock) {
         return try {
             ensureDirectoriesExist()
-            levelFile.writeText(serializeLevelData(normalized))
+            writeTextAtomically(levelFile, serializeLevelData(normalized))
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed writing level.json at ${levelFile.absolutePath}", e)
@@ -397,6 +759,7 @@ class WorldSaveManager(
         var entitySuccess = false
         synchronized(lockFor(pos)) {
             ensureDirectoriesExist()
+            markBase36DirectoryActive()
 
             // 1. Binary chunk block data (V4 SHA-256 deduplicated pointer -> V2 / V3 LZ4 / V1 master)
             // CRITICAL: Hash ONLY the raw 4096-byte block array, NEVER custom blockDataMap.
@@ -413,11 +776,11 @@ class WorldSaveManager(
                         val masterFile = masterFileFor(hashHex)
                         if (!masterFile.exists()) {
                             val encodedMaster = OsmiumCodec.encode(bytesCopy)
-                            masterFile.writeBytes(encodedMaster)
+                            writeBytesAtomically(masterFile, encodedMaster)
                         }
                     }
                     val pointerBytes = OsmiumCodec.encodePointer(hashBytes)
-                    cFile.writeBytes(pointerBytes)
+                    writeBytesAtomically(cFile, pointerBytes)
                 }
                 totalChunkDiskWrites.incrementAndGet()
                 chunkSuccess = true
@@ -438,7 +801,7 @@ class WorldSaveManager(
                         dFile.delete()
                     }
                 } else {
-                    dFile.writeText(serializeChunkBlockData(blockDataCopy))
+                    writeTextAtomically(dFile, serializeChunkBlockData(blockDataCopy))
                 }
                 dataSuccess = true
             } catch (e: Exception) {
@@ -464,7 +827,7 @@ class WorldSaveManager(
                         chunkZ = pos.z,
                         entities = serializedEntities
                     )
-                    eFile.writeText(serializeChunkEntities(payload))
+                    writeTextAtomically(eFile, serializeChunkEntities(payload))
                 }
                 entitySuccess = true
             } catch (e: Exception) {
@@ -479,15 +842,83 @@ class WorldSaveManager(
         return chunkSuccess && dataSuccess && entitySuccess
     }
 
+    private fun writeBytesAtomically(targetFile: File, bytes: ByteArray) {
+        writeBytesAtomicallyInternal(targetFile, bytes, invokeTestHook = true)
+    }
+
+    private fun writeBytesAtomicallyRaw(targetFile: File, bytes: ByteArray) {
+        writeBytesAtomicallyInternal(targetFile, bytes, invokeTestHook = false)
+    }
+
+    private fun writeBytesAtomicallyInternal(
+        targetFile: File,
+        bytes: ByteArray,
+        invokeTestHook: Boolean
+    ) {
+        val parent = targetFile.parentFile
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs()
+        }
+        val tmpFile = File(parent, "${targetFile.name}$TEMP_SUFFIX")
+        var replaced = false
+        try {
+            FileOutputStream(tmpFile).use { fos ->
+                fos.write(bytes)
+                fos.flush()
+                try {
+                    fos.fd.sync()
+                } catch (_: SyncFailedException) {
+                    // Best-effort sync on virtual/test filesystems
+                }
+            }
+            if (invokeTestHook) {
+                testAtomicWriteStageHook?.invoke(targetFile, tmpFile)
+            }
+            if (!renameReplacing(tmpFile, targetFile)) {
+                throw IOException("Failed to atomically replace ${targetFile.name}")
+            }
+            replaced = true
+        } finally {
+            if (!replaced && tmpFile.exists()) {
+                tmpFile.delete()
+            }
+        }
+    }
+
+    private fun writeTextAtomically(targetFile: File, content: String) {
+        writeBytesAtomically(targetFile, content.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun renameReplacing(sourceFile: File, targetFile: File): Boolean {
+        if (sourceFile.renameTo(targetFile)) {
+            return true
+        }
+        if (targetFile.exists()) {
+            val backupFile = File(targetFile.parentFile, "${targetFile.name}.bak")
+            if (backupFile.exists()) {
+                backupFile.delete()
+            }
+            if (targetFile.renameTo(backupFile)) {
+                if (sourceFile.renameTo(targetFile)) {
+                    backupFile.delete()
+                    return true
+                }
+                backupFile.renameTo(targetFile)
+            }
+        }
+        return false
+    }
+
     /**
      * Reads raw 4096-byte chunk data if saved (checking any pending async write first),
-     * resolving V4 SHA-256 pointers against `chunks/masters/` or decoding Legacy/V1/V2/V3 directly,
-     * and quarantining missing/corrupted files.
+     * running Base36 migration if needed, resolving V4 SHA-256 pointers against `chunks/masters/`
+     * or decoding Legacy/V1/V2/V3 directly, and quarantining missing/corrupted files.
      */
     override fun loadChunkBytes(pos: ChunkPos): ByteArray? {
         pendingChunkWrites[pos]?.let { pending ->
             return pending.bytes?.copyOf()
         }
+        ensureBase36Migrated()
         synchronized(lockFor(pos)) {
             pendingChunkWrites[pos]?.let { pending ->
                 return pending.bytes?.copyOf()
@@ -546,12 +977,13 @@ class WorldSaveManager(
     }
 
     /**
-     * Reads sparse custom block metadata from `chunks/c_X_Y_Z.data` (or pending async write).
+     * Reads sparse custom block metadata from Base36 `chunks/c_X_Y_Z.data` (or pending async write).
      */
     override fun loadBlockData(pos: ChunkPos): Map<Int, Map<String, TypedValue>> {
         pendingBlockDataWrites[pos]?.let { pending ->
             return pending.blockData
         }
+        ensureBase36Migrated()
         synchronized(lockFor(pos)) {
             pendingBlockDataWrites[pos]?.let { pending ->
                 return pending.blockData
@@ -568,6 +1000,7 @@ class WorldSaveManager(
         pendingEntityWrites[pos]?.let { pending ->
             return pending.entities.mapNotNull { EntityPersistenceRegistry.deserialize(it) }
         }
+        ensureBase36Migrated()
         synchronized(lockFor(pos)) {
             pendingEntityWrites[pos]?.let { pending ->
                 return pending.entities.mapNotNull { EntityPersistenceRegistry.deserialize(it) }
@@ -701,6 +1134,18 @@ class WorldSaveManager(
         const val ENTITIES_DIR_NAME = "entities"
         const val LEVEL_FILE_NAME = "level.json"
 
+        internal const val TEMP_SUFFIX = ".tmp"
+        internal const val MIG_TMP_SUFFIX = ".migtmp"
+        internal const val MIG_ORIG_SUFFIX = ".migorig"
+        internal const val CORRUPT_SUFFIX = ".corrupt"
+        internal const val BASE36_MIGRATED_MARKER = ".base36_migrated"
+        internal const val MIGRATION_JOURNAL_NAME = ".migration_journal.json"
+
+        private const val DIR_TYPE_CHUNKS = "chunks"
+        private const val DIR_TYPE_ENTITIES = "entities"
+        private const val PHASE_STAGING_COMPLETE = "STAGING_COMPLETE"
+        private const val PHASE_PROMOTING_TARGETS = "PROMOTING_TARGETS"
+
         private val moshi: Moshi = Moshi.Builder()
             .addLast(KotlinJsonAdapterFactory())
             .build()
@@ -708,6 +1153,17 @@ class WorldSaveManager(
         private val levelAdapter = moshi.adapter(WorldSaveData::class.java).indent("  ")
         private val chunkEntitiesAdapter = moshi.adapter(ChunkEntityFileData::class.java).indent("  ")
         private val chunkBlockDataAdapter = moshi.adapter(ChunkBlockDataFileData::class.java).indent("  ")
+        private val migrationJournalAdapter = moshi.adapter(MigrationJournal::class.java).indent("  ")
+
+        internal fun isAuxiliaryOrTempName(name: String): Boolean {
+            return name.endsWith(TEMP_SUFFIX) ||
+                name.endsWith(MIG_TMP_SUFFIX) ||
+                name.endsWith(MIG_ORIG_SUFFIX) ||
+                name.endsWith(CORRUPT_SUFFIX) ||
+                name.endsWith(".bak") ||
+                name == BASE36_MIGRATED_MARKER ||
+                name == MIGRATION_JOURNAL_NAME
+        }
 
         fun getBaseFilesDir(context: Context): File {
             return context.getExternalFilesDir(null) ?: context.filesDir
@@ -874,7 +1330,7 @@ class WorldSaveManager(
         fun quarantineCorruptChunkFile(file: File) {
             try {
                 Log.e(TAG, "CRITICAL: Corrupted chunk file detected: ${file.absolutePath}. Quarantining to .corrupt.")
-                val corruptFile = File(file.parentFile, "${file.name}.corrupt")
+                val corruptFile = File(file.parentFile, "${file.name}$CORRUPT_SUFFIX")
                 if (corruptFile.exists()) {
                     corruptFile.delete()
                 }

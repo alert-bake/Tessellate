@@ -17,10 +17,15 @@ sealed class TypedValue {
  * allocated lazily only for chunks that are neither uniformly `-16` dark nor uniformly `+16` lit.
  */
 class Chunk(
-    val chunkX: Int,
-    val chunkY: Int,
-    val chunkZ: Int
+    val chunkX: Long,
+    val chunkY: Long,
+    val chunkZ: Long
 ) {
+    constructor(chunkX: Int, chunkY: Int, chunkZ: Int) : this(
+        chunkX.toLong(),
+        chunkY.toLong(),
+        chunkZ.toLong()
+    )
     companion object {
         const val SIZE = 16
         const val VOLUME = SIZE * SIZE * SIZE // 4096 blocks

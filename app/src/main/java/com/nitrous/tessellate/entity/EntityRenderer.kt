@@ -260,9 +260,9 @@ class EntityRenderer {
             val yawFallback = renderState?.yawRadians ?: 0f
 
             val lightMul = if (world != null) {
-                val bx = floor(baseX).toInt()
-                val by = floor(baseY).toInt()
-                val bz = floor(baseZ).toInt()
+                val bx = floor(baseX).toLong()
+                val by = floor(baseY).toLong()
+                val bz = floor(baseZ).toLong()
                 lightToMultiplier(world.getIntendedLight(bx, by, bz))
             } else {
                 1.0f
@@ -498,9 +498,9 @@ class EntityRenderer {
         if (shader.programId == 0) return
         val mesh = cubeMesh ?: return
 
-        val eyeX = floor(camera.eyeX).toInt()
-        val eyeY = floor(camera.eyeY).toInt()
-        val eyeZ = floor(camera.eyeZ).toInt()
+        val eyeX = floor(camera.eyeX).toLong()
+        val eyeY = floor(camera.eyeY).toLong()
+        val eyeZ = floor(camera.eyeZ).toLong()
         val intended = world?.getIntendedLight(eyeX, eyeY, eyeZ) ?: Chunk.MAX_LIGHT.toByte()
         val lightMul = lightToMultiplier(intended)
         lastHandLightLevel = lightMul

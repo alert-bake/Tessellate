@@ -62,9 +62,20 @@ object CborRegistryCache : RegistryCborCacheDelegate {
             }
             if (!tempFile.renameTo(cacheFile)) {
                 if (cacheFile.exists()) {
-                    cacheFile.delete()
-                }
-                if (!tempFile.renameTo(cacheFile)) {
+                    val backupFile = File(parent, "${cacheFile.name}.bak")
+                    if (backupFile.exists()) {
+                        backupFile.delete()
+                    }
+                    if (!cacheFile.renameTo(backupFile)) {
+                        throw IllegalStateException("Failed to move existing ${cacheFile.name} to backup")
+                    }
+                    if (tempFile.renameTo(cacheFile)) {
+                        backupFile.delete()
+                    } else {
+                        backupFile.renameTo(cacheFile)
+                        throw IllegalStateException("Failed to rename ${tempFile.name} to ${cacheFile.name}")
+                    }
+                } else {
                     throw IllegalStateException("Failed to rename ${tempFile.name} to ${cacheFile.name}")
                 }
             }

@@ -92,6 +92,9 @@ object RegistryBootstrap {
     var cborCacheMisses: Int = 0
         private set
 
+    @Volatile
+    private var lastActiveSnapshot: RegistryCacheSnapshot? = null
+
     fun setDefaultAssetSource(assetSource: ContentAssetSource?) {
         defaultAssetSource = assetSource
     }
@@ -212,18 +215,10 @@ object RegistryBootstrap {
                     message = "CBOR cache encoder unavailable"
                 )
 
+            val wasInitialized = (state == State.INITIALIZED)
             val tempFile = File(cacheFile.parentFile, "${cacheFile.name}.tmp")
             if (tempFile.exists()) {
                 tempFile.delete()
-            }
-            if (cacheFile.exists() && !cacheFile.delete()) {
-                return CborReloadResult(
-                    success = false,
-                    parsedJsonCount = 0,
-                    cacheFilePath = cacheFile.absolutePath,
-                    sourceHash = null,
-                    message = "Failed to delete existing CBOR cache at ${cacheFile.name}"
-                )
             }
 
             return try {
@@ -237,7 +232,8 @@ object RegistryBootstrap {
                     extraWorldGenPassJsons = emptyList(),
                     extraStructoidJsons = emptyList(),
                     preFreezeHook = null,
-                    bypassCacheRead = true
+                    bypassCacheRead = true,
+                    preserveExistingOnFailure = wasInitialized
                 )
                 if (!cacheFile.isFile || cacheFile.length() == 0L) {
                     CborReloadResult(
@@ -309,9 +305,11 @@ object RegistryBootstrap {
         extraWorldGenPassJsons: List<String>,
         extraStructoidJsons: List<String>,
         preFreezeHook: (() -> Unit)?,
-        bypassCacheRead: Boolean
+        bypassCacheRead: Boolean,
+        preserveExistingOnFailure: Boolean = false
     ) {
-        state = State.INITIALIZING
+        val previousSnapshot = if (preserveExistingOnFailure) lastActiveSnapshot else null
+        var clearedActiveRegistries = false
         try {
             // Collect mod directories (user mod content dir if present + caller-supplied dirs)
             val effectiveModDirs = buildList {
@@ -375,15 +373,13 @@ object RegistryBootstrap {
                     lastSourceHash = sourceHash
                     cborCacheHits++
                     lastLoadedModSignature = computeModSignature(assetSource)
+                    lastActiveSnapshot = cachedSnapshot
                     state = State.INITIALIZED
                     return
                 }
             }
 
-            // 1. Initialize/clear registries for full JSON boot
-            clearRegistriesForBootstrap()
-
-            // 2. Parse JSON content definitions
+            // 1. Parse and validate all JSON content BEFORE mutating active registries
             var parsedCount = 0
             if (blockSources.isEmpty()) {
                 throw ContentLoadException("No block JSON definitions found under $ASSETS_BLOCKS_DIR")
@@ -416,8 +412,14 @@ object RegistryBootstrap {
                 parseJson(name, json, structoidAdapter, "structoid definition")
             }
 
-            // Sort block definitions so air loads first (guaranteeing numeric ID 0 for empty chunks)
             val orderedBlocks = orderBlockDefinitions(blockDefs)
+            validateContentRelationships(orderedBlocks, itemDefs, recipeDefs, structoidDefs)
+
+            // 2. Clear and populate registries now that inputs & links are validated
+            state = State.INITIALIZING
+            clearedActiveRegistries = true
+            clearRegistriesForBootstrap()
+
             val cachedBlocks = ArrayList<CachedBlockEntry>(orderedBlocks.size)
             for (def in orderedBlocks) {
                 cachedBlocks.add(registerBlockDefinition(def))
@@ -465,19 +467,21 @@ object RegistryBootstrap {
             // 4. Freeze all registries
             freezeAllRegistries()
 
+            val activeSnapshot = RegistryCacheSnapshot(
+                version = RegistryCacheSnapshot.CURRENT_VERSION,
+                sourceHash = sourceHash,
+                blocks = cachedBlocks,
+                items = cachedItems,
+                recipes = cachedRecipes,
+                commands = commandDefs,
+                worldGenPasses = passDefs,
+                structoids = structoidDefs
+            )
+            lastActiveSnapshot = activeSnapshot
+
             // 5. Persist atomic CBOR cache for future boots
             if (cacheFile != null && cacheDelegate != null) {
-                val snapshot = RegistryCacheSnapshot(
-                    version = RegistryCacheSnapshot.CURRENT_VERSION,
-                    sourceHash = sourceHash,
-                    blocks = cachedBlocks,
-                    items = cachedItems,
-                    recipes = cachedRecipes,
-                    commands = commandDefs,
-                    worldGenPasses = passDefs,
-                    structoids = structoidDefs
-                )
-                cacheDelegate.writeCacheAtomic(cacheFile, snapshot)
+                cacheDelegate.writeCacheAtomic(cacheFile, activeSnapshot)
             }
 
             lastBootUsedCborCache = false
@@ -487,8 +491,61 @@ object RegistryBootstrap {
             lastLoadedModSignature = computeModSignature(assetSource)
             state = State.INITIALIZED
         } catch (t: Throwable) {
-            state = State.UNINITIALIZED
+            if (clearedActiveRegistries) {
+                if (preserveExistingOnFailure && previousSnapshot != null && tryRestoreFromCborSnapshot(previousSnapshot)) {
+                    lastActiveSnapshot = previousSnapshot
+                    state = State.INITIALIZED
+                } else {
+                    state = State.UNINITIALIZED
+                }
+            } else if (!preserveExistingOnFailure) {
+                state = State.UNINITIALIZED
+            }
             throw t
+        }
+    }
+
+    private fun validateContentRelationships(
+        blockDefs: List<BlockDefinitionJson>,
+        itemDefs: List<ItemDefinitionJson>,
+        recipeDefs: List<RecipeDefinitionJson>,
+        structoidDefs: List<StructoidDefinitionJson>
+    ) {
+        val blockIds = HashSet<String>(blockDefs.size)
+        for (def in blockDefs) {
+            blockIds.add(Identifier.parse(def.id).normalizedString)
+        }
+        val itemIds = HashSet<String>(itemDefs.size)
+        for (def in itemDefs) {
+            val id = Identifier.parse(def.id)
+            val resolvedBlockId = def.blockId?.takeIf { it.isNotBlank() }
+            if (resolvedBlockId != null) {
+                val normalizedBlock = Identifier.parse(resolvedBlockId).normalizedString
+                if (!blockIds.contains(normalizedBlock)) {
+                    throw ContentLoadException("Item '${def.id}' references unknown block '$resolvedBlockId'")
+                }
+            }
+            parseItemType(def.itemType, resolvedBlockId != null)
+            itemIds.add(id.normalizedString)
+        }
+        for (def in recipeDefs) {
+            Identifier.parse(def.id)
+            if (def.ingredients.isEmpty()) {
+                throw ContentLoadException("Recipe '${def.id}' must declare at least one ingredient")
+            }
+            for (ing in def.ingredients) {
+                val normalizedIng = Identifier.parse(ing.item).normalizedString
+                if (!itemIds.contains(normalizedIng)) {
+                    throw ContentLoadException("Recipe '${def.id}' references unknown ingredient item '${ing.item}'")
+                }
+            }
+            val normalizedResult = Identifier.parse(def.result.item).normalizedString
+            if (!itemIds.contains(normalizedResult)) {
+                throw ContentLoadException("Recipe '${def.id}' references unknown result item '${def.result.item}'")
+            }
+        }
+        for (def in structoidDefs) {
+            com.nitrous.tessellate.worldgen.StructoidSizeChunks.parse(def.sizeChunks)
         }
     }
 
@@ -599,6 +656,7 @@ object RegistryBootstrap {
             }
 
             freezeAllRegistries()
+            lastActiveSnapshot = snapshot
             true
         } catch (_: Throwable) {
             clearRegistriesForBootstrap()

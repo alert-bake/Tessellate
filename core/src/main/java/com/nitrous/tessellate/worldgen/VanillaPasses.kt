@@ -61,7 +61,7 @@ class SurfacePass(
                             lightBuf[idx] = Chunk.MAX_LIGHT.toByte()
                             hasSky = true
                         }
-                        wy == surfaceY -> {
+                        wy == surfaceY.toLong() -> {
                             chunk.setBlockRaw(lx, ly, lz, grass)
                             lightBuf[idx] = Chunk.MIN_LIGHT.toByte()
                             hasGround = true
@@ -92,7 +92,7 @@ class SurfacePass(
         const val MAX_HEIGHT = 80
         private const val SURFACE_SCALE: Double = 0.018
 
-        fun computeSurfaceY(seed: Long, wx: Int, wz: Int): Int {
+        fun computeSurfaceY(seed: Long, wx: Long, wz: Long): Int {
             val n = PerlinNoise.fbm2DNormalized(
                 seed,
                 wx.toDouble() * SURFACE_SCALE,
@@ -101,6 +101,9 @@ class SurfacePass(
             )
             return (MIN_HEIGHT + (n * (MAX_HEIGHT - MIN_HEIGHT)).toInt()).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
         }
+
+        fun computeSurfaceY(seed: Long, wx: Int, wz: Int): Int =
+            computeSurfaceY(seed, wx.toLong(), wz.toLong())
     }
 }
 
@@ -148,7 +151,7 @@ class CavePass(
         private const val CAVE_FREQ_XZ: Double = 0.055
         private const val CAVE_FREQ_Y: Double = 0.075
 
-        fun isCaveAt(seed: Long, wx: Int, wy: Int, wz: Int): Boolean {
+        fun isCaveAt(seed: Long, wx: Long, wy: Long, wz: Long): Boolean {
             if (wy >= MAX_CAVE_Y) return false
             // Boost amplitude gently around 0.5 so Perlin caves exceed 0.6 cleanly while remaining walkable
             val raw = PerlinNoise.noise3D(
@@ -160,6 +163,9 @@ class CavePass(
             val normalized = 0.5 + raw * 0.9
             return normalized > NOISE_THRESHOLD
         }
+
+        fun isCaveAt(seed: Long, wx: Int, wy: Int, wz: Int): Boolean =
+            isCaveAt(seed, wx.toLong(), wy.toLong(), wz.toLong())
     }
 }
 
@@ -234,31 +240,31 @@ class TreeFeaturePass(
                 if (rootY + 7 < baseY || rootY + 1 >= baseY + Chunk.SIZE) continue
 
                 // Roll deterministic 2% chance for this grass column
-                if (PerlinNoise.hashFloat(world.seed + 17389L, tx, rootY, tz) >= TREE_CHANCE) continue
+                if (PerlinNoise.hashFloat(world.seed + 17389L, tx, rootY.toLong(), tz) >= TREE_CHANCE) continue
 
                 // If root block lies inside this chunk, ensure it actually remained grass (wasn't carved)
-                val rootLx = tx - baseX
-                val rootLy = rootY - baseY
-                val rootLz = tz - baseZ
+                val rootLx = (tx - baseX).toInt()
+                val rootLy = (rootY - baseY).toInt()
+                val rootLz = (tz - baseZ).toInt()
                 if (rootLx in 0 until Chunk.SIZE && rootLy in 0 until Chunk.SIZE && rootLz in 0 until Chunk.SIZE) {
                     if (chunk.getBlock(rootLx, rootLy, rootLz) != grass) continue
                 } else {
                     // Deterministic carve check when root sits in a neighboring/lower chunk
-                    if (CavePass.isCaveAt(world.seed, tx, rootY, tz)) continue
+                    if (CavePass.isCaveAt(world.seed, tx, rootY.toLong(), tz)) continue
                 }
 
-                val trunkHeight = 4 + PerlinNoise.hashInt(world.seed + 31337L, tx, rootY, tz, 3) // 4..6 blocks
+                val trunkHeight = 4 + PerlinNoise.hashInt(world.seed + 31337L, tx, rootY.toLong(), tz, 3) // 4..6 blocks
                 val trunkTopY = rootY + trunkHeight
 
                 // Place 3x3 canopy layers around top of trunk (trunkTopY - 1 .. trunkTopY + 1)
                 for (cy in (trunkTopY - 1)..(trunkTopY + 1)) {
-                    val ly = cy - baseY
+                    val ly = (cy - baseY).toInt()
                     if (ly !in 0 until Chunk.SIZE) continue
                     for (dx in -1..1) {
-                        val lx = (tx + dx) - baseX
+                        val lx = ((tx + dx) - baseX).toInt()
                         if (lx !in 0 until Chunk.SIZE) continue
                         for (dz in -1..1) {
-                            val lz = (tz + dz) - baseZ
+                            val lz = ((tz + dz) - baseZ).toInt()
                             if (lz !in 0 until Chunk.SIZE) continue
                             // Do not overwrite trunk center up to trunkTopY
                             if (dx == 0 && dz == 0 && cy <= trunkTopY) continue
@@ -271,9 +277,9 @@ class TreeFeaturePass(
 
                 // Place 4-6 block tall oak log trunk
                 for (ty in (rootY + 1)..trunkTopY) {
-                    val ly = ty - baseY
-                    val lx = tx - baseX
-                    val lz = tz - baseZ
+                    val ly = (ty - baseY).toInt()
+                    val lx = (tx - baseX).toInt()
+                    val lz = (tz - baseZ).toInt()
                     if (lx in 0 until Chunk.SIZE && ly in 0 until Chunk.SIZE && lz in 0 until Chunk.SIZE) {
                         chunk.setBlockRaw(lx, ly, lz, oakLog)
                     }

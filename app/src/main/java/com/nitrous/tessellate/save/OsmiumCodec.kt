@@ -133,8 +133,9 @@ object OsmiumCodec {
         }
 
         val rlePayload = encodeRlePayload(blocks)
+        val v2TotalSize = 2 + rlePayload.size
         if (rlePayload.size < LZ4_THRESHOLD_BYTES) {
-            val v2Bytes = ByteArray(2 + rlePayload.size)
+            val v2Bytes = ByteArray(v2TotalSize)
             v2Bytes[0] = MAGIC_BYTE_0
             v2Bytes[1] = VERSION_V2
             System.arraycopy(rlePayload, 0, v2Bytes, 2, rlePayload.size)
@@ -142,23 +143,34 @@ object OsmiumCodec {
         }
 
         val compressed = lz4Compressor.compress(rlePayload)
-        // V3 payload: [2-byte uncompressed RLE length] + [LZ4 compressed bytes]
-        val v3PayloadSize = 2 + compressed.size
-        if (v3PayloadSize > Chunk.VOLUME) {
-            val v1Bytes = ByteArray(2 + Chunk.VOLUME)
-            v1Bytes[0] = MAGIC_BYTE_0
-            v1Bytes[1] = VERSION_V1
-            System.arraycopy(blocks, 0, v1Bytes, 2, Chunk.VOLUME)
-            return OsmiumEncodedChunk(v1Bytes, OsmiumFormat.V1_RAW)
+        // V3 layout: [2-byte header] + [2-byte uncompressed RLE length] + [LZ4 compressed bytes]
+        val v3TotalSize = 4 + compressed.size
+        val v1TotalSize = 2 + Chunk.VOLUME
+
+        // LZ4 must ONLY be selected when it strictly reduces the encoded payload size vs V2
+        if (v3TotalSize < v2TotalSize && v3TotalSize <= v1TotalSize) {
+            val v3Bytes = ByteArray(v3TotalSize)
+            v3Bytes[0] = MAGIC_BYTE_0
+            v3Bytes[1] = VERSION_V3
+            v3Bytes[2] = ((rlePayload.size ushr 8) and 0xFF).toByte()
+            v3Bytes[3] = (rlePayload.size and 0xFF).toByte()
+            System.arraycopy(compressed, 0, v3Bytes, 4, compressed.size)
+            return OsmiumEncodedChunk(v3Bytes, OsmiumFormat.V3_LZ4)
         }
 
-        val v3Bytes = ByteArray(2 + v3PayloadSize)
-        v3Bytes[0] = MAGIC_BYTE_0
-        v3Bytes[1] = VERSION_V3
-        v3Bytes[2] = ((rlePayload.size ushr 8) and 0xFF).toByte()
-        v3Bytes[3] = (rlePayload.size and 0xFF).toByte()
-        System.arraycopy(compressed, 0, v3Bytes, 4, compressed.size)
-        return OsmiumEncodedChunk(v3Bytes, OsmiumFormat.V3_LZ4)
+        if (v2TotalSize <= v1TotalSize) {
+            val v2Bytes = ByteArray(v2TotalSize)
+            v2Bytes[0] = MAGIC_BYTE_0
+            v2Bytes[1] = VERSION_V2
+            System.arraycopy(rlePayload, 0, v2Bytes, 2, rlePayload.size)
+            return OsmiumEncodedChunk(v2Bytes, OsmiumFormat.V2_OSMIUM)
+        }
+
+        val v1Bytes = ByteArray(v1TotalSize)
+        v1Bytes[0] = MAGIC_BYTE_0
+        v1Bytes[1] = VERSION_V1
+        System.arraycopy(blocks, 0, v1Bytes, 2, Chunk.VOLUME)
+        return OsmiumEncodedChunk(v1Bytes, OsmiumFormat.V1_RAW)
     }
 
     /**

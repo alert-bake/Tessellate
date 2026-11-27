@@ -111,7 +111,7 @@ class Tdd017OptimizationPassTest {
         assertTrue("Frustum culling must skip behind-camera chunks", renderer.frustumCulledChunksCount > 0)
         assertFalse(
             "Chunks behind camera must not appear in visible chunks",
-            visible.any { it.chunk.chunkZ == 0 }
+            visible.any { it.chunk.chunkZ == 0L }
         )
     }
 

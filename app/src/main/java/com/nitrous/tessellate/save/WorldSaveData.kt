@@ -63,9 +63,9 @@ data class SavedEntityData(
  * Per-chunk JSON wrapper saved at `saves/<world>/entities/c_X_Y_Z.json`.
  */
 data class ChunkEntityFileData(
-    val chunkX: Int,
-    val chunkY: Int,
-    val chunkZ: Int,
+    val chunkX: Long,
+    val chunkY: Long,
+    val chunkZ: Long,
     val entities: List<SavedEntityData> = emptyList()
 )
 

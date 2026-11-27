@@ -38,18 +38,18 @@ object PerlinNoise {
     }
 
     fun noise2D(seed: Long, x: Double, z: Double): Double {
-        val ix = floor(x).toInt()
-        val iz = floor(z).toInt()
-        val fx = x - ix
-        val fz = z - iz
+        val ix = floor(x).toLong()
+        val iz = floor(z).toLong()
+        val fx = x - ix.toDouble()
+        val fz = z - iz.toDouble()
 
         val u = fade(fx)
         val v = fade(fz)
 
         val n00 = grad2D(hash2(seed, ix, iz), fx, fz)
-        val n10 = grad2D(hash2(seed, ix + 1, iz), fx - 1.0, fz)
-        val n01 = grad2D(hash2(seed, ix, iz + 1), fx, fz - 1.0)
-        val n11 = grad2D(hash2(seed, ix + 1, iz + 1), fx - 1.0, fz - 1.0)
+        val n10 = grad2D(hash2(seed, ix + 1L, iz), fx - 1.0, fz)
+        val n01 = grad2D(hash2(seed, ix, iz + 1L), fx, fz - 1.0)
+        val n11 = grad2D(hash2(seed, ix + 1L, iz + 1L), fx - 1.0, fz - 1.0)
 
         val nx0 = lerp(n00, n10, u)
         val nx1 = lerp(n01, n11, u)
@@ -57,26 +57,26 @@ object PerlinNoise {
     }
 
     fun noise3D(seed: Long, x: Double, y: Double, z: Double): Double {
-        val ix = floor(x).toInt()
-        val iy = floor(y).toInt()
-        val iz = floor(z).toInt()
+        val ix = floor(x).toLong()
+        val iy = floor(y).toLong()
+        val iz = floor(z).toLong()
 
-        val fx = x - ix
-        val fy = y - iy
-        val fz = z - iz
+        val fx = x - ix.toDouble()
+        val fy = y - iy.toDouble()
+        val fz = z - iz.toDouble()
 
         val u = fade(fx)
         val v = fade(fy)
         val w = fade(fz)
 
         val n000 = grad3D(hash3(seed, ix, iy, iz), fx, fy, fz)
-        val n100 = grad3D(hash3(seed, ix + 1, iy, iz), fx - 1.0, fy, fz)
-        val n010 = grad3D(hash3(seed, ix, iy + 1, iz), fx, fy - 1.0, fz)
-        val n110 = grad3D(hash3(seed, ix + 1, iy + 1, iz), fx - 1.0, fy - 1.0, fz)
-        val n001 = grad3D(hash3(seed, ix, iy, iz + 1), fx, fy, fz - 1.0)
-        val n101 = grad3D(hash3(seed, ix + 1, iy, iz + 1), fx - 1.0, fy, fz - 1.0)
-        val n011 = grad3D(hash3(seed, ix, iy + 1, iz + 1), fx, fy - 1.0, fz - 1.0)
-        val n111 = grad3D(hash3(seed, ix + 1, iy + 1, iz + 1), fx - 1.0, fy - 1.0, fz - 1.0)
+        val n100 = grad3D(hash3(seed, ix + 1L, iy, iz), fx - 1.0, fy, fz)
+        val n010 = grad3D(hash3(seed, ix, iy + 1L, iz), fx, fy - 1.0, fz)
+        val n110 = grad3D(hash3(seed, ix + 1L, iy + 1L, iz), fx - 1.0, fy - 1.0, fz)
+        val n001 = grad3D(hash3(seed, ix, iy, iz + 1L), fx, fy, fz - 1.0)
+        val n101 = grad3D(hash3(seed, ix + 1L, iy, iz + 1L), fx - 1.0, fy, fz - 1.0)
+        val n011 = grad3D(hash3(seed, ix, iy + 1L, iz + 1L), fx, fy - 1.0, fz - 1.0)
+        val n111 = grad3D(hash3(seed, ix + 1L, iy + 1L, iz + 1L), fx - 1.0, fy - 1.0, fz - 1.0)
 
         val nx00 = lerp(n000, n100, u)
         val nx10 = lerp(n010, n110, u)
@@ -92,33 +92,39 @@ object PerlinNoise {
     /**
      * Deterministic float in [0, 1) for spatial hashes.
      */
-    fun hashFloat(seed: Long, x: Int, y: Int, z: Int): Float {
+    fun hashFloat(seed: Long, x: Long, y: Long, z: Long): Float {
         val h = hash3(seed, x, y, z) and 0x00FFFFFF
         return h / 16777216.0f
     }
 
+    fun hashFloat(seed: Long, x: Int, y: Int, z: Int): Float =
+        hashFloat(seed, x.toLong(), y.toLong(), z.toLong())
+
     /**
      * Deterministic integer in [0, bound) for spatial hashes.
      */
-    fun hashInt(seed: Long, x: Int, y: Int, z: Int, bound: Int): Int {
+    fun hashInt(seed: Long, x: Long, y: Long, z: Long, bound: Int): Int {
         if (bound <= 1) return 0
         val h = hash3(seed, x, y, z) and 0x7FFFFFFF
         return h % bound
     }
 
+    fun hashInt(seed: Long, x: Int, y: Int, z: Int, bound: Int): Int =
+        hashInt(seed, x.toLong(), y.toLong(), z.toLong(), bound)
+
     private fun fade(t: Double): Double = t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
     private fun lerp(a: Double, b: Double, t: Double): Double = a + t * (b - a)
 
-    private fun hash2(seed: Long, x: Int, z: Int): Int {
-        return hash3(seed, x, 0, z)
+    private fun hash2(seed: Long, x: Long, z: Long): Int {
+        return hash3(seed, x, 0L, z)
     }
 
-    private fun hash3(seed: Long, x: Int, y: Int, z: Int): Int {
+    private fun hash3(seed: Long, x: Long, y: Long, z: Long): Int {
         var h = seed
-        h = h xor (x.toLong() * 0x9E3779B97F4A7C15UL.toLong())
-        h = h xor (y.toLong() * 0xBF58476D1CE4E5B9UL.toLong())
-        h = h xor (z.toLong() * 0x94D049BB133111EBUL.toLong())
+        h = h xor (x * 0x9E3779B97F4A7C15UL.toLong())
+        h = h xor (y * 0xBF58476D1CE4E5B9UL.toLong())
+        h = h xor (z * 0x94D049BB133111EBUL.toLong())
         h = (h xor (h ushr 30)) * 0xBF58476D1CE4E5B9UL.toLong()
         h = (h xor (h ushr 27)) * 0x94D049BB133111EBUL.toLong()
         h = h xor (h ushr 31)

@@ -23,12 +23,12 @@ class ChunkMesh(
 ) : PrebuiltChunkMesh {
     /** World-space bounding box of this 16x16x16 chunk for frustum culling. */
     val worldBounds: AABB = AABB(
-        minX = (chunk.chunkX * Chunk.SIZE).toDouble(),
-        minY = (chunk.chunkY * Chunk.SIZE).toDouble(),
-        minZ = (chunk.chunkZ * Chunk.SIZE).toDouble(),
-        maxX = ((chunk.chunkX + 1) * Chunk.SIZE).toDouble(),
-        maxY = ((chunk.chunkY + 1) * Chunk.SIZE).toDouble(),
-        maxZ = ((chunk.chunkZ + 1) * Chunk.SIZE).toDouble()
+        minX = chunk.chunkX.toDouble() * Chunk.SIZE,
+        minY = chunk.chunkY.toDouble() * Chunk.SIZE,
+        minZ = chunk.chunkZ.toDouble() * Chunk.SIZE,
+        maxX = (chunk.chunkX.toDouble() + 1.0) * Chunk.SIZE,
+        maxY = (chunk.chunkY.toDouble() + 1.0) * Chunk.SIZE,
+        maxZ = (chunk.chunkZ.toDouble() + 1.0) * Chunk.SIZE
     )
 
     val originX: Double get() = worldBounds.minX

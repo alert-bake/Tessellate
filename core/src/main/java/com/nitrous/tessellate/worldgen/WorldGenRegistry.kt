@@ -138,7 +138,7 @@ object WorldGenRegistry {
             val block = when {
                 wy < FLAT_DIRT_START_Y -> stone
                 wy < FLAT_GRASS_Y -> dirt
-                wy == FLAT_GRASS_Y -> grass
+                wy == FLAT_GRASS_Y.toLong() -> grass
                 else -> null
             } ?: continue
 
@@ -170,10 +170,10 @@ object WorldGenRegistry {
                 for (lx in 0 until Chunk.SIZE) {
                     val wx = baseX + lx
                     when {
-                        wy < FLAT_GRASS_Y - 1 -> chunk.setBlockRaw(lx, ly, lz, stone)
-                        wy == FLAT_GRASS_Y - 1 -> chunk.setBlockRaw(lx, ly, lz, protoStone)
-                        wy == FLAT_GRASS_Y && palette.isNotEmpty() && wx >= 0 && wz >= 0 && wx % 2 == 0 && wz % 2 == 0 -> {
-                            val idx = ((wx / 2) + (wz / 2) * 7) % palette.size
+                        wy < FLAT_GRASS_Y - 1L -> chunk.setBlockRaw(lx, ly, lz, stone)
+                        wy == FLAT_GRASS_Y - 1L -> chunk.setBlockRaw(lx, ly, lz, protoStone)
+                        wy == FLAT_GRASS_Y.toLong() && palette.isNotEmpty() && wx >= 0L && wz >= 0L && wx % 2L == 0L && wz % 2L == 0L -> {
+                            val idx = (((wx / 2L) + (wz / 2L) * 7L) % palette.size.toLong()).toInt()
                             chunk.setBlockRaw(lx, ly, lz, palette[idx])
                         }
                     }

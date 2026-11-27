@@ -22,17 +22,17 @@ class LightEngine(
     private val lightLock = Any()
 
     // Primitive ring buffers for time-sliced lightRendered BFS addition & removal waves
-    private var addX = IntArray(INITIAL_QUEUE_CAPACITY)
-    private var addY = IntArray(INITIAL_QUEUE_CAPACITY)
-    private var addZ = IntArray(INITIAL_QUEUE_CAPACITY)
+    private var addX = LongArray(INITIAL_QUEUE_CAPACITY)
+    private var addY = LongArray(INITIAL_QUEUE_CAPACITY)
+    private var addZ = LongArray(INITIAL_QUEUE_CAPACITY)
     private var addFromDir = ByteArray(INITIAL_QUEUE_CAPACITY)
     private var addHead = 0
     private var addTail = 0
     private var addCount = 0
 
-    private var remX = IntArray(INITIAL_QUEUE_CAPACITY)
-    private var remY = IntArray(INITIAL_QUEUE_CAPACITY)
-    private var remZ = IntArray(INITIAL_QUEUE_CAPACITY)
+    private var remX = LongArray(INITIAL_QUEUE_CAPACITY)
+    private var remY = LongArray(INITIAL_QUEUE_CAPACITY)
+    private var remZ = LongArray(INITIAL_QUEUE_CAPACITY)
     private var remLevel = IntArray(INITIAL_QUEUE_CAPACITY)
     private var remFromDir = ByteArray(INITIAL_QUEUE_CAPACITY)
     private var remHead = 0
@@ -40,25 +40,25 @@ class LightEngine(
     private var remCount = 0
 
     // Synchronous lightIntended scratch queues (guarded by lightLock)
-    private var syncAddX = IntArray(512)
-    private var syncAddY = IntArray(512)
-    private var syncAddZ = IntArray(512)
+    private var syncAddX = LongArray(512)
+    private var syncAddY = LongArray(512)
+    private var syncAddZ = LongArray(512)
     private var syncAddFromDir = ByteArray(512)
 
-    private var syncRemX = IntArray(512)
-    private var syncRemY = IntArray(512)
-    private var syncRemZ = IntArray(512)
+    private var syncRemX = LongArray(512)
+    private var syncRemY = LongArray(512)
+    private var syncRemZ = LongArray(512)
     private var syncRemLevel = IntArray(512)
     private var syncRemFromDir = ByteArray(512)
 
-    private var reseedX = IntArray(256)
-    private var reseedY = IntArray(256)
-    private var reseedZ = IntArray(256)
+    private var reseedX = LongArray(256)
+    private var reseedY = LongArray(256)
+    private var reseedZ = LongArray(256)
 
     // Reusable 4-slot chunk cache to eliminate repeated World.getChunk() chunkLock acquisitions inside BFS
-    private val cacheCx = IntArray(4)
-    private val cacheCy = IntArray(4)
-    private val cacheCz = IntArray(4)
+    private val cacheCx = LongArray(4)
+    private val cacheCy = LongArray(4)
+    private val cacheCz = LongArray(4)
     private val cacheChunks = arrayOfNulls<Chunk>(4)
     private var cacheCursor = 0
 
@@ -112,8 +112,8 @@ class LightEngine(
         }
     }
 
-    private fun getChunkCached(world: World, cx: Int, cy: Int, cz: Int): Chunk? {
-        if (cy !in 0 until world.chunksY) return null
+    private fun getChunkCached(world: World, cx: Long, cy: Long, cz: Long): Chunk? {
+        if (cy !in 0L until world.chunksY.toLong()) return null
         for (i in 0 until 4) {
             val c = cacheChunks[i]
             if (c != null && cacheCx[i] == cx && cacheCy[i] == cy && cacheCz[i] == cz) {
@@ -141,11 +141,11 @@ class LightEngine(
     fun initializeChunkLighting(
         chunk: Chunk,
         world: World,
-        chunkLookup: (Int, Int, Int) -> Chunk? = { cx, cy, cz -> world.getChunk(cx, cy, cz) }
+        chunkLookup: (Long, Long, Long) -> Chunk? = { cx, cy, cz -> world.getChunk(cx, cy, cz) }
     ) {
         if (chunk.isEmpty) {
             val above = if (chunk.chunkY < world.chunksY - 1) {
-                chunkLookup(chunk.chunkX, chunk.chunkY + 1, chunk.chunkZ)
+                chunkLookup(chunk.chunkX, chunk.chunkY + 1L, chunk.chunkZ)
             } else {
                 null
             }
@@ -376,15 +376,19 @@ class LightEngine(
      * a block transitions from [oldBlock] to [newBlock] at `(wx, wy, wz)`.
      */
     fun onBlockChanged(world: World, wx: Int, wy: Int, wz: Int, oldBlock: BlockType, newBlock: BlockType) {
-        if (wy !in 0 until world.sizeY) return
+        onBlockChanged(world, wx.toLong(), wy.toLong(), wz.toLong(), oldBlock, newBlock)
+    }
+
+    fun onBlockChanged(world: World, wx: Long, wy: Long, wz: Long, oldBlock: BlockType, newBlock: BlockType) {
+        if (wy !in 0L until world.sizeY.toLong()) return
         val cx = wx shr 4
         val cy = wy shr 4
         val cz = wz shr 4
         val chunk = world.getChunk(cx, cy, cz) ?: return
 
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
 
         val oldIntended = chunk.getIntendedLightUnchecked(lx, ly, lz)
         val oldRendered = chunk.getRenderedLightUnchecked(lx, ly, lz)
@@ -406,10 +410,10 @@ class LightEngine(
                     enqueueRemoveLocked(wx, wy, wz, oldRendered, DIR_NONE)
                     // Clear direct skylight beam below for rendered wave as well
                     if (oldRendered == MAX_LIGHT) {
-                        var yDown = wy - 1
-                        while (yDown >= 0) {
+                        var yDown = wy - 1L
+                        while (yDown >= 0L) {
                             val belowChunk = getChunkCached(world, wx shr 4, yDown shr 4, wz shr 4) ?: break
-                            val bly = yDown and Chunk.MASK
+                            val bly = (yDown and 15L).toInt()
                             if (belowChunk.getBlockUnchecked(lx, bly, lz).isOpaque) break
                             val belowRend = belowChunk.getRenderedLightUnchecked(lx, bly, lz)
                             if (belowRend < MAX_LIGHT) break
@@ -470,10 +474,10 @@ class LightEngine(
 
                 // If opening an opaque block uncovered direct skylight above an air column below, illuminate the column down
                 if (skyOpenHere) {
-                    var yDown = wy - 1
-                    while (yDown >= 0) {
+                    var yDown = wy - 1L
+                    while (yDown >= 0L) {
                         val bChunk = getChunkCached(world, wx shr 4, yDown shr 4, wz shr 4) ?: break
-                        val bly = yDown and Chunk.MASK
+                        val bly = (yDown and 15L).toInt()
                         if (bChunk.getBlockUnchecked(lx, bly, lz).isOpaque) break
                         if (bChunk.getIntendedLightUnchecked(lx, bly, lz) < MAX_LIGHT) {
                             bChunk.ensureLightStorage()
@@ -501,12 +505,12 @@ class LightEngine(
      * Seeds a light source level at `(wx, wy, wz)` in `lightIntended` and enqueues it for
      * time-sliced `lightRendered` propagation via [step].
      */
-    fun seedLight(world: World, wx: Int, wy: Int, wz: Int, level: Int) {
-        if (wy !in 0 until world.sizeY) return
+    fun seedLight(world: World, wx: Long, wy: Long, wz: Long, level: Int) {
+        if (wy !in 0L until world.sizeY.toLong()) return
         val chunk = world.getChunk(wx shr 4, wy shr 4, wz shr 4) ?: return
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
         val clamped = level.coerceIn(MIN_LIGHT, MAX_LIGHT)
         chunk.ensureLightStorage()
         chunk.setIntendedLight(lx, ly, lz, clamped)
@@ -514,6 +518,10 @@ class LightEngine(
         synchronized(lightLock) {
             enqueueAddLocked(wx, wy, wz, DIR_NONE)
         }
+    }
+
+    fun seedLight(world: World, wx: Int, wy: Int, wz: Int, level: Int) {
+        seedLight(world, wx.toLong(), wy.toLong(), wz.toLong(), level)
     }
 
     /**
@@ -598,7 +606,7 @@ class LightEngine(
     // Synchronous Starlight BFS Helpers for lightIntended
     // =========================================================================
 
-    private fun propagateIntendedAdditionLocked(world: World, startX: Int, startY: Int, startZ: Int, startFromDir: Byte) {
+    private fun propagateIntendedAdditionLocked(world: World, startX: Long, startY: Long, startZ: Long, startFromDir: Byte) {
         var head = 0
         var tail = 0
         syncAddX[tail] = startX
@@ -615,7 +623,7 @@ class LightEngine(
             head++
 
             val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: continue
-            val level = chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK)
+            val level = chunk.getIntendedLightUnchecked((wx and 15L).toInt(), (wy and 15L).toInt(), (wz and 15L).toInt())
             val nextLevel = level - 1
             if (nextLevel <= MIN_LIGHT) continue
 
@@ -625,11 +633,11 @@ class LightEngine(
                 val nx = wx + dir.dx
                 val ny = wy + dir.dy
                 val nz = wz + dir.dz
-                if (ny !in 0 until world.sizeY) continue
+                if (ny !in 0L until world.sizeY.toLong()) continue
                 val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
-                val nlx = nx and Chunk.MASK
-                val nly = ny and Chunk.MASK
-                val nlz = nz and Chunk.MASK
+                val nlx = (nx and 15L).toInt()
+                val nly = (ny and 15L).toInt()
+                val nlz = (nz and 15L).toInt()
 
                 val neighborBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
                 if (neighborBlock.isOpaque) continue
@@ -652,9 +660,9 @@ class LightEngine(
 
     private fun propagateIntendedRemovalLocked(
         world: World,
-        startX: Int,
-        startY: Int,
-        startZ: Int,
+        startX: Long,
+        startY: Long,
+        startZ: Long,
         startOldLevel: Int,
         checkSkyColumnBelow: Boolean
     ) {
@@ -670,12 +678,12 @@ class LightEngine(
         rTail++
 
         if (checkSkyColumnBelow) {
-            var yDown = startY - 1
-            val lx = startX and Chunk.MASK
-            val lz = startZ and Chunk.MASK
-            while (yDown >= 0) {
+            var yDown = startY - 1L
+            val lx = (startX and 15L).toInt()
+            val lz = (startZ and 15L).toInt()
+            while (yDown >= 0L) {
                 val bChunk = getChunkCached(world, startX shr 4, yDown shr 4, startZ shr 4) ?: break
-                val bly = yDown and Chunk.MASK
+                val bly = (yDown and 15L).toInt()
                 val bBlock = bChunk.getBlockUnchecked(lx, bly, lz)
                 if (bBlock.isOpaque) break
                 val cur = bChunk.getIntendedLightUnchecked(lx, bly, lz)
@@ -715,11 +723,11 @@ class LightEngine(
                 val nx = wx + dir.dx
                 val ny = wy + dir.dy
                 val nz = wz + dir.dz
-                if (ny !in 0 until world.sizeY) continue
+                if (ny !in 0L until world.sizeY.toLong()) continue
                 val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
-                val nlx = nx and Chunk.MASK
-                val nly = ny and Chunk.MASK
-                val nlz = nz and Chunk.MASK
+                val nlx = (nx and 15L).toInt()
+                val nly = (ny and 15L).toInt()
+                val nlz = (nz and 15L).toInt()
 
                 val nBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
                 val neighborLight = nChunk.getIntendedLightUnchecked(nlx, nly, nlz)
@@ -755,9 +763,9 @@ class LightEngine(
             val ry = reseedY[i]
             val rz = reseedZ[i]
             val rChunk = getChunkCached(world, rx shr 4, ry shr 4, rz shr 4) ?: continue
-            val rlx = rx and Chunk.MASK
-            val rly = ry and Chunk.MASK
-            val rlz = rz and Chunk.MASK
+            val rlx = (rx and 15L).toInt()
+            val rly = (ry and 15L).toInt()
+            val rlz = (rz and 15L).toInt()
             val rBlock = rChunk.getBlockUnchecked(rlx, rly, rlz)
             val emission = rBlock.lightEmission.toInt()
             if (emission > 0 && rChunk.getIntendedLightUnchecked(rlx, rly, rlz) < emission) {
@@ -767,11 +775,11 @@ class LightEngine(
         }
     }
 
-    private fun pullFromNeighborsIntoIntendedLocked(world: World, wx: Int, wy: Int, wz: Int) {
+    private fun pullFromNeighborsIntoIntendedLocked(world: World, wx: Long, wy: Long, wz: Long) {
         val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
         var best = chunk.getIntendedLightUnchecked(lx, ly, lz)
         for (d in 0 until DIRECTIONS.size) {
             val dir = DIRECTIONS[d]
@@ -786,13 +794,13 @@ class LightEngine(
         }
     }
 
-    private fun hasDirectSkyAbove(world: World, wx: Int, wy: Int, wz: Int): Boolean {
-        val aboveY = wy + 1
-        if (aboveY >= world.sizeY) return true
+    private fun hasDirectSkyAbove(world: World, wx: Long, wy: Long, wz: Long): Boolean {
+        val aboveY = wy + 1L
+        if (aboveY >= world.sizeY.toLong()) return true
         val aboveChunk = getChunkCached(world, wx shr 4, aboveY shr 4, wz shr 4) ?: return true
-        val lx = wx and Chunk.MASK
-        val ly = aboveY and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (aboveY and 15L).toInt()
+        val lz = (wz and 15L).toInt()
         return !aboveChunk.getBlockUnchecked(lx, ly, lz).isOpaque &&
             aboveChunk.getIntendedLightUnchecked(lx, ly, lz) >= MAX_LIGHT
     }
@@ -825,12 +833,12 @@ class LightEngine(
         }
     }
 
-    private fun processRemoveNodeLocked(world: World, wx: Int, wy: Int, wz: Int, oldLevel: Int, fromDir: Byte) {
-        if (wy !in 0 until world.sizeY) return
+    private fun processRemoveNodeLocked(world: World, wx: Long, wy: Long, wz: Long, oldLevel: Int, fromDir: Byte) {
+        if (wy !in 0L until world.sizeY.toLong()) return
         val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
 
         val intendedHere = chunk.getIntendedLightUnchecked(lx, ly, lz)
         val blockHere = chunk.getBlockUnchecked(lx, ly, lz)
@@ -845,11 +853,11 @@ class LightEngine(
             val nx = wx + dir.dx
             val ny = wy + dir.dy
             val nz = wz + dir.dz
-            if (ny !in 0 until world.sizeY) continue
+            if (ny !in 0L until world.sizeY.toLong()) continue
             val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
-            val nlx = nx and Chunk.MASK
-            val nly = ny and Chunk.MASK
-            val nlz = nz and Chunk.MASK
+            val nlx = (nx and 15L).toInt()
+            val nly = (ny and 15L).toInt()
+            val nlz = (nz and 15L).toInt()
 
             val nBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
             val neighborRendered = nChunk.getRenderedLightUnchecked(nlx, nly, nlz)
@@ -863,12 +871,12 @@ class LightEngine(
         }
     }
 
-    private fun processAddNodeLocked(world: World, wx: Int, wy: Int, wz: Int, fromDir: Byte) {
-        if (wy !in 0 until world.sizeY) return
+    private fun processAddNodeLocked(world: World, wx: Long, wy: Long, wz: Long, fromDir: Byte) {
+        if (wy !in 0L until world.sizeY.toLong()) return
         val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return
-        val lx = wx and Chunk.MASK
-        val ly = wy and Chunk.MASK
-        val lz = wz and Chunk.MASK
+        val lx = (wx and 15L).toInt()
+        val ly = (wy and 15L).toInt()
+        val lz = (wz and 15L).toInt()
 
         val intended = chunk.getIntendedLightUnchecked(lx, ly, lz)
         if (fromDir != DIR_NONE && chunk.getRenderedLightUnchecked(lx, ly, lz) > intended) return
@@ -883,11 +891,11 @@ class LightEngine(
             val nx = wx + dir.dx
             val ny = wy + dir.dy
             val nz = wz + dir.dz
-            if (ny !in 0 until world.sizeY) continue
+            if (ny !in 0L until world.sizeY.toLong()) continue
             val nChunk = getChunkCached(world, nx shr 4, ny shr 4, nz shr 4) ?: continue
-            val nlx = nx and Chunk.MASK
-            val nly = ny and Chunk.MASK
-            val nlz = nz and Chunk.MASK
+            val nlx = (nx and 15L).toInt()
+            val nly = (ny and 15L).toInt()
+            val nlz = (nz and 15L).toInt()
 
             val neighborBlock = nChunk.getBlockUnchecked(nlx, nly, nlz)
             if (neighborBlock.isOpaque && neighborBlock.lightEmission <= 0) continue
@@ -912,29 +920,29 @@ class LightEngine(
         }
     }
 
-    private fun markLightBoundaryChunks(world: World, cx: Int, cy: Int, cz: Int, lx: Int, ly: Int, lz: Int) {
-        if (lx == 0) getChunkCached(world, cx - 1, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
-        if (lx == Chunk.MASK) getChunkCached(world, cx + 1, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
-        if (ly == 0 && cy > 0) getChunkCached(world, cx, cy - 1, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
-        if (ly == Chunk.MASK && cy < world.chunksY - 1) getChunkCached(world, cx, cy + 1, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
-        if (lz == 0) getChunkCached(world, cx, cy, cz - 1)?.let { if (!it.isCompletelyDark) it.markDirty() }
-        if (lz == Chunk.MASK) getChunkCached(world, cx, cy, cz + 1)?.let { if (!it.isCompletelyDark) it.markDirty() }
+    private fun markLightBoundaryChunks(world: World, cx: Long, cy: Long, cz: Long, lx: Int, ly: Int, lz: Int) {
+        if (lx == 0) getChunkCached(world, cx - 1L, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lx == Chunk.MASK) getChunkCached(world, cx + 1L, cy, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (ly == 0 && cy > 0L) getChunkCached(world, cx, cy - 1L, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (ly == Chunk.MASK && cy < world.chunksY - 1L) getChunkCached(world, cx, cy + 1L, cz)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lz == 0) getChunkCached(world, cx, cy, cz - 1L)?.let { if (!it.isCompletelyDark) it.markDirty() }
+        if (lz == Chunk.MASK) getChunkCached(world, cx, cy, cz + 1L)?.let { if (!it.isCompletelyDark) it.markDirty() }
     }
 
-    private fun getIntendedLightGlobal(world: World, wx: Int, wy: Int, wz: Int): Int {
-        if (wy !in 0 until world.sizeY) {
-            return if (wy >= world.sizeY) MAX_LIGHT else MIN_LIGHT
+    private fun getIntendedLightGlobal(world: World, wx: Long, wy: Long, wz: Long): Int {
+        if (wy !in 0L until world.sizeY.toLong()) {
+            return if (wy >= world.sizeY.toLong()) MAX_LIGHT else MIN_LIGHT
         }
         val chunk = getChunkCached(world, wx shr 4, wy shr 4, wz shr 4) ?: return MAX_LIGHT
-        return chunk.getIntendedLightUnchecked(wx and Chunk.MASK, wy and Chunk.MASK, wz and Chunk.MASK)
+        return chunk.getIntendedLightUnchecked((wx and 15L).toInt(), (wy and 15L).toInt(), (wz and 15L).toInt())
     }
 
-    private fun enqueueAddLocked(x: Int, y: Int, z: Int, fromDir: Byte) {
+    private fun enqueueAddLocked(x: Long, y: Long, z: Long, fromDir: Byte) {
         if (addCount == addX.size) {
             val newCap = addX.size * 2
-            val nx = IntArray(newCap)
-            val ny = IntArray(newCap)
-            val nz = IntArray(newCap)
+            val nx = LongArray(newCap)
+            val ny = LongArray(newCap)
+            val nz = LongArray(newCap)
             val nd = ByteArray(newCap)
             for (i in 0 until addCount) {
                 val idx = (addHead + i) % addX.size
@@ -958,12 +966,12 @@ class LightEngine(
         addCount++
     }
 
-    private fun enqueueRemoveLocked(x: Int, y: Int, z: Int, oldLevel: Int, fromDir: Byte) {
+    private fun enqueueRemoveLocked(x: Long, y: Long, z: Long, oldLevel: Int, fromDir: Byte) {
         if (remCount == remX.size) {
             val newCap = remX.size * 2
-            val nx = IntArray(newCap)
-            val ny = IntArray(newCap)
-            val nz = IntArray(newCap)
+            val nx = LongArray(newCap)
+            val ny = LongArray(newCap)
+            val nz = LongArray(newCap)
             val nl = IntArray(newCap)
             val nd = ByteArray(newCap)
             for (i in 0 until remCount) {

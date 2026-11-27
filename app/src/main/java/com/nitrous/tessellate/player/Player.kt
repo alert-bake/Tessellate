@@ -246,12 +246,12 @@ class Player(
                 posX - radius, posY + resolvedDy, posZ - radius,
                 posX + radius, posY + currentHeight + resolvedDy, posZ + radius
             )
-            val minX = floor(testBoxY.minX).toInt()
-            val maxX = floor(testBoxY.maxX).toInt()
-            val minY = floor(testBoxY.minY).toInt()
-            val maxY = floor(testBoxY.maxY).toInt()
-            val minZ = floor(testBoxY.minZ).toInt()
-            val maxZ = floor(testBoxY.maxZ).toInt()
+            val minX = floor(testBoxY.minX).toLong()
+            val maxX = floor(testBoxY.maxX).toLong()
+            val minY = floor(testBoxY.minY).toLong()
+            val maxY = floor(testBoxY.maxY).toLong()
+            val minZ = floor(testBoxY.minZ).toLong()
+            val maxZ = floor(testBoxY.maxZ).toLong()
 
             var collidedY = false
             for (bx in minX..maxX) {
@@ -303,12 +303,12 @@ class Player(
                 posX + resolvedDx - radius, posY + 0.05, posZ - radius,
                 posX + resolvedDx + radius, posY + currentHeight - 0.05, posZ + radius
             )
-            val minX = floor(testBoxX.minX).toInt()
-            val maxX = floor(testBoxX.maxX).toInt()
-            val minY = floor(testBoxX.minY).toInt()
-            val maxY = floor(testBoxX.maxY).toInt()
-            val minZ = floor(testBoxX.minZ).toInt()
-            val maxZ = floor(testBoxX.maxZ).toInt()
+            val minX = floor(testBoxX.minX).toLong()
+            val maxX = floor(testBoxX.maxX).toLong()
+            val minY = floor(testBoxX.minY).toLong()
+            val maxY = floor(testBoxX.maxY).toLong()
+            val minZ = floor(testBoxX.minZ).toLong()
+            val maxZ = floor(testBoxX.maxZ).toLong()
 
             var collidedX = false
             for (bx in minX..maxX) {
@@ -351,12 +351,12 @@ class Player(
                 posX - radius, posY + 0.05, posZ + resolvedDz - radius,
                 posX + radius, posY + currentHeight - 0.05, posZ + resolvedDz + radius
             )
-            val minX = floor(testBoxZ.minX).toInt()
-            val maxX = floor(testBoxZ.maxX).toInt()
-            val minY = floor(testBoxZ.minY).toInt()
-            val maxY = floor(testBoxZ.maxY).toInt()
-            val minZ = floor(testBoxZ.minZ).toInt()
-            val maxZ = floor(testBoxZ.maxZ).toInt()
+            val minX = floor(testBoxZ.minX).toLong()
+            val maxX = floor(testBoxZ.maxX).toLong()
+            val minY = floor(testBoxZ.minY).toLong()
+            val maxY = floor(testBoxZ.maxY).toLong()
+            val minZ = floor(testBoxZ.minZ).toLong()
+            val maxZ = floor(testBoxZ.maxZ).toLong()
 
             var collidedZ = false
             for (bx in minX..maxX) {
@@ -418,12 +418,12 @@ class Player(
     }
 
     fun hasBlockCollision(aabb: AABB, world: World): Boolean {
-        val minX = floor(aabb.minX).toInt()
-        val maxX = floor(aabb.maxX).toInt()
-        val minY = floor(aabb.minY).toInt()
-        val maxY = floor(aabb.maxY).toInt()
-        val minZ = floor(aabb.minZ).toInt()
-        val maxZ = floor(aabb.maxZ).toInt()
+        val minX = floor(aabb.minX).toLong()
+        val maxX = floor(aabb.maxX).toLong()
+        val minY = floor(aabb.minY).toLong()
+        val maxY = floor(aabb.maxY).toLong()
+        val minZ = floor(aabb.minZ).toLong()
+        val maxZ = floor(aabb.maxZ).toLong()
 
         val blockBox = scratchBlockBox
         for (bx in minX..maxX) {
@@ -448,7 +448,7 @@ class Player(
     fun spawnAtSurface(world: World, spawnX: Double = 24.5, spawnZ: Double = 24.5) {
         posX = spawnX
         posZ = spawnZ
-        val surfaceY = world.getSurfaceHeight(floor(spawnX).toInt(), floor(spawnZ).toInt())
+        val surfaceY = world.getSurfaceHeight(floor(spawnX).toLong(), floor(spawnZ).toLong())
         posY = surfaceY + 1.05
         velX = 0.0
         velY = 0.0
