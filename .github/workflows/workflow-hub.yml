@@ -1,0 +1,77 @@
+name: Workflow Hub
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_debug:
+        description: "Build Debug APK & Run Unit Tests"
+        required: false
+        type: boolean
+        default: false
+      run_optimized:
+        description: "Build Optimized Release APK"
+        required: false
+        type: boolean
+        default: false
+      run_ultra_optimized:
+        description: "Build Ultra-Optimized Release APK"
+        required: false
+        type: boolean
+        default: false
+      run_unoptimized:
+        description: "Build Unoptimized Release APK"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch Selected Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch selected workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          RUN_DEBUG: ${{ inputs.run_debug }}
+          RUN_OPTIMIZED: ${{ inputs.run_optimized }}
+          RUN_ULTRA: ${{ inputs.run_ultra_optimized }}
+          RUN_UNOPTIMIZED: ${{ inputs.run_unoptimized }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dispatch() {
+            local workflow="$1"
+            local payload="$2"
+            echo "Dispatching $workflow..."
+            curl --fail-with-body --silent --show-error \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/$GH_REPO/actions/workflows/$workflow/dispatches" \
+              -d "$payload"
+            echo "Dispatched $workflow."
+          }
+
+          if [[ "$RUN_DEBUG" == "true" ]]; then
+            dispatch "release.yml" "$(jq -n --arg ref "$REF" '{ref: $ref, inputs: {release_build: false}}')"
+          fi
+
+          if [[ "$RUN_OPTIMIZED" == "true" ]]; then
+            dispatch "release.yml" "$(jq -n --arg ref "$REF" '{ref: $ref, inputs: {release_build: true}}')"
+          fi
+
+          if [[ "$RUN_ULTRA" == "true" ]]; then
+            dispatch "ultra-optimized-release.yml" "$(jq -n --arg ref "$REF" '{ref: $ref}')"
+          fi
+
+          if [[ "$RUN_UNOPTIMIZED" == "true" ]]; then
+            dispatch "unoptimized-release.yml" "$(jq -n --arg ref "$REF" '{ref: $ref}')"
+          fi
