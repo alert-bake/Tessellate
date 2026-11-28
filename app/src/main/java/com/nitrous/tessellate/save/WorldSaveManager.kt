@@ -1213,10 +1213,16 @@ class WorldSaveManager(
             val dirs = savesRoot.listFiles()?.filter { it.isDirectory } ?: return emptyList()
             val result = ArrayList<WorldSaveData>(dirs.size)
             for (dir in dirs) {
-                val levelFile = File(dir, LEVEL_FILE_NAME)
-                if (!levelFile.exists() || !levelFile.isFile) continue
+                val primaryFile = File(dir, LEVEL_FILE_NAME)
+                val targetFile = if (primaryFile.exists() && primaryFile.isFile && primaryFile.length() > 0L) {
+                    primaryFile
+                } else {
+                    val backupFile = File(dir, "$LEVEL_FILE_NAME.bak")
+                    if (backupFile.exists() && backupFile.isFile && backupFile.length() > 0L) backupFile else primaryFile
+                }
+                if (!targetFile.exists() || !targetFile.isFile || targetFile.length() == 0L) continue
                 try {
-                    val json = levelFile.readText()
+                    val json = targetFile.readText()
                     if (json.isBlank()) continue
                     val parsed = levelAdapter.fromJson(json) ?: continue
                     result.add(
@@ -1224,8 +1230,8 @@ class WorldSaveManager(
                             folderName = dir.name
                         )
                     )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to read world metadata from ${levelFile.absolutePath}", e)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed to read world metadata from ${targetFile.absolutePath}", t)
                 }
             }
             result.sortWith(
@@ -1255,12 +1261,18 @@ class WorldSaveManager(
         }
 
         fun parseLevelData(file: File): WorldSaveData? {
-            if (!file.exists() || !file.isFile) return null
+            val target = if (file.exists() && file.isFile && file.length() > 0L) {
+                file
+            } else {
+                val backup = File(file.parentFile, "${file.name}.bak")
+                if (backup.exists() && backup.isFile && backup.length() > 0L) backup else file
+            }
+            if (!target.exists() || !target.isFile || target.length() == 0L) return null
             return try {
-                val json = file.readText()
+                val json = target.readText()
                 if (json.isBlank()) null else levelAdapter.fromJson(json)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse level.json at ${file.absolutePath}", e)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to parse level.json at ${target.absolutePath}", t)
                 null
             }
         }

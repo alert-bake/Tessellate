@@ -867,6 +867,11 @@ class WorldScene : IGameScene {
 
     override fun release() {
         cancelMining()
+        try {
+            saveManager?.flushBlocking()
+        } catch (_: Throwable) {
+            // Best-effort flush on teardown
+        }
         world.shutdownStreaming()
         worldRenderer.release()
         entityRenderer.release()

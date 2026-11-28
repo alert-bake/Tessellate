@@ -743,10 +743,10 @@ class TessellateEngine(
         Log.i(TAG, "TessellateEngine: onDestroy - Releasing resources")
         synchronized(modeLock) {
             touchController.resetAllInputs()
-            if (currentAppState == AppState.PLAYING || currentAppState == AppState.INVENTORY) {
-                if (currentAppState == AppState.INVENTORY) {
-                    uiRenderer.inventoryScreen.returnAllItemsAndReset()
-                }
+            if (currentAppState == AppState.INVENTORY) {
+                uiRenderer.inventoryScreen.returnAllItemsAndReset()
+            }
+            if (worldScene.currentSession != null) {
                 worldScene.saveCurrentWorld(blocking = true)
             }
             worldScene.worldRenderer.parallelMesher.shutdown()

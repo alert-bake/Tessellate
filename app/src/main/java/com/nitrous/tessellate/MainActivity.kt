@@ -600,11 +600,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         val engine = surfaceView?.engine
-        if (engine != null && (engine.currentAppState == AppState.PLAYING || engine.currentAppState == AppState.INVENTORY)) {
+        if (engine != null) {
             if (engine.currentAppState == AppState.INVENTORY) {
                 engine.uiRenderer.inventoryScreen.returnAllItemsAndReset()
             }
-            engine.worldScene.saveCurrentWorld(blocking = true)
+            if (engine.worldScene.currentSession != null) {
+                engine.worldScene.saveCurrentWorld(blocking = true)
+            }
         }
         surfaceView?.handleDestroy()
         surfaceView = null

@@ -145,7 +145,10 @@ class WorldSelectScreen(
             if (world != null) {
                 val isSel = worldIndex == selectedWorldIndex
                 val prefix = if (isSel) "> " else ""
-                btn.label = "$prefix${world.worldName} (${world.gamemode.displayName} / ${world.worldType.displayName})"
+                val name = world.worldName.ifBlank { "World" }
+                val gm = world.gamemode?.displayName ?: "Survival"
+                val wt = world.worldType?.displayName ?: "Default"
+                btn.label = "$prefix$name ($gm / $wt)"
                 btn.enabled = true
                 btn.isSelected = isSel
             } else {

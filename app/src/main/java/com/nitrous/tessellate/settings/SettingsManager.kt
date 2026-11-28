@@ -150,12 +150,18 @@ class SettingsManager(
     }
 
     private fun readSettingsFromDisk(): GameSettings = synchronized(fileLock) {
-        if (!settingsFile.exists() || !settingsFile.isFile) {
+        val target = if (settingsFile.exists() && settingsFile.isFile && settingsFile.length() > 0L) {
+            settingsFile
+        } else {
+            val backup = File(settingsFile.parentFile, "${settingsFile.name}.bak")
+            if (backup.exists() && backup.isFile && backup.length() > 0L) backup else settingsFile
+        }
+        if (!target.exists() || !target.isFile || target.length() == 0L) {
             return GameSettings()
         }
 
         return try {
-            val json = settingsFile.readText()
+            val json = target.readText()
             if (json.isBlank()) {
                 return GameSettings()
             }
@@ -259,18 +265,42 @@ class SettingsManager(
             }
             val json = adapter.toJson(sanitized)
             val tmpFile = File(parent ?: settingsFile.absoluteFile.parentFile, "${settingsFile.name}.tmp")
-            tmpFile.writeText(json)
-            if (settingsFile.exists()) {
-                if (!tmpFile.renameTo(settingsFile)) {
-                    settingsFile.writeText(json)
-                    tmpFile.delete()
-                }
-            } else if (!tmpFile.renameTo(settingsFile)) {
-                settingsFile.writeText(json)
-                tmpFile.delete()
+            val backupFile = File(parent ?: settingsFile.absoluteFile.parentFile, "${settingsFile.name}.bak")
+            
+            java.io.FileOutputStream(tmpFile).use { fos ->
+                fos.write(json.toByteArray(Charsets.UTF_8))
+                fos.flush()
+                try {
+                    fos.fd.sync()
+                } catch (_: java.io.SyncFailedException) {}
             }
-            Log.i(TAG, "Settings saved successfully.")
-            true
+            
+            val ok = if (tmpFile.renameTo(settingsFile)) {
+                if (backupFile.exists()) backupFile.delete()
+                true
+            } else if (settingsFile.exists()) {
+                if (backupFile.exists()) backupFile.delete()
+                if (settingsFile.renameTo(backupFile)) {
+                    if (tmpFile.renameTo(settingsFile)) {
+                        backupFile.delete()
+                        true
+                    } else {
+                        backupFile.renameTo(settingsFile)
+                        tmpFile.delete()
+                        false
+                    }
+                } else {
+                    tmpFile.delete()
+                    false
+                }
+            } else {
+                tmpFile.delete()
+                false
+            }
+            if (ok) {
+                Log.i(TAG, "Settings saved successfully.")
+            }
+            ok
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save settings.json.", e)
             false
