@@ -20,13 +20,23 @@
 # Preserve source file and line numbers for readable release crash stack traces
 -keepattributes SourceFile,LineNumberTable,*Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# Keep Moshi @JsonClass models and KSP-generated JsonAdapters
+# Keep Moshi @JsonClass models, KSP-generated JsonAdapters, and serialized enums
 -keep @com.squareup.moshi.JsonClass class * { *; }
 -keep class **JsonAdapter { *; }
 -keepclasseswithmembers class * {
     @com.squareup.moshi.* <fields>;
 }
+-keepclassmembers enum com.nitrous.tessellate.world.** {
+    **[] $VALUES;
+    public *;
+}
 -keep class com.nitrous.tessellate.settings.GameSettings { *; }
 -keep class com.nitrous.tessellate.ui.UiLayoutConfig { *; }
 -keep class com.nitrous.tessellate.ui.HotbarUiLayout { *; }
 -keep class com.nitrous.tessellate.ui.UiUvRect { *; }
+
+# Keep lz4-java runtime implementations loaded via Class.forName in LZ4Factory.fastestInstance()
+-keep class net.jpountz.lz4.** { *; }
+-keep class net.jpountz.util.** { *; }
+-dontwarn net.jpountz.**
+-dontwarn sun.misc.Unsafe

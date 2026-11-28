@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.nitrous.tessellate.save.WorldSaveManager
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -51,9 +50,7 @@ class SettingsManager(
     @Volatile
     private var lastWrittenVersion: Int = 0
 
-    private val moshi: Moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
+    private val moshi: Moshi = Moshi.Builder().build()
 
     private val adapter = moshi.adapter(GameSettings::class.java).indent("  ")
 

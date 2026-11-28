@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.io.File
 
 /**
@@ -121,9 +120,7 @@ object UiLayoutLoader {
     private const val TAG = "Tessellate.UiLayout"
     const val LAYOUT_FILE_NAME = "ui_layout.json"
 
-    private val moshi: Moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
+    private val moshi: Moshi = Moshi.Builder().build()
 
     private val adapter = moshi.adapter(UiLayoutConfig::class.java)
 

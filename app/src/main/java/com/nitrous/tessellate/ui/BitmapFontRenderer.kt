@@ -11,7 +11,6 @@ import com.nitrous.tessellate.graphics.Shader
 import com.nitrous.tessellate.math.Matrix4
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.io.File
 import kotlin.math.round
 import kotlin.math.roundToInt
@@ -631,11 +630,7 @@ class BitmapFontRenderer(
             "pqrstuvwxyz{|}~"
         )
 
-        private val moshi: Moshi by lazy {
-            Moshi.Builder()
-                .addLast(KotlinJsonAdapterFactory())
-                .build()
-        }
+        private val moshi: Moshi by lazy { Moshi.Builder().build() }
         private val configAdapter by lazy { moshi.adapter(BitmapFontConfig::class.java) }
 
         fun defaultFontConfig(): BitmapFontConfig = BitmapFontConfig(

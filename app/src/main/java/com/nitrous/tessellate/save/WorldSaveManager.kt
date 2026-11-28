@@ -8,8 +8,8 @@ import com.nitrous.tessellate.world.ChunkPos
 import com.nitrous.tessellate.world.TypedValue
 import com.nitrous.tessellate.world.World
 import com.nitrous.tessellate.world.WorldChunkStorage
+import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -108,6 +108,7 @@ class WorldSaveManager(
         val alreadyMigrated: Boolean = false
     )
 
+    @JsonClass(generateAdapter = true)
     internal data class MigrationJournalEntry(
         val dirType: String,
         val sourceName: String,
@@ -115,6 +116,7 @@ class WorldSaveManager(
         val sha256Hex: String
     )
 
+    @JsonClass(generateAdapter = true)
     internal data class MigrationJournal(
         val phase: String,
         val entries: List<MigrationJournalEntry> = emptyList()
@@ -1146,9 +1148,7 @@ class WorldSaveManager(
         private const val PHASE_STAGING_COMPLETE = "STAGING_COMPLETE"
         private const val PHASE_PROMOTING_TARGETS = "PROMOTING_TARGETS"
 
-        private val moshi: Moshi = Moshi.Builder()
-            .addLast(KotlinJsonAdapterFactory())
-            .build()
+        private val moshi: Moshi = Moshi.Builder().build()
 
         private val levelAdapter = moshi.adapter(WorldSaveData::class.java).indent("  ")
         private val chunkEntitiesAdapter = moshi.adapter(ChunkEntityFileData::class.java).indent("  ")

@@ -8,11 +8,13 @@ import com.nitrous.tessellate.math.Vec3
 import com.nitrous.tessellate.world.GameMode
 import com.nitrous.tessellate.world.WorldSession
 import com.nitrous.tessellate.world.WorldType
+import com.squareup.moshi.JsonClass
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Serializable representation of a single hotbar slot stored in `level.json`.
  */
+@JsonClass(generateAdapter = true)
 data class SavedHotbarSlot(
     val slot: Int,
     val itemId: String? = null,
@@ -22,6 +24,7 @@ data class SavedHotbarSlot(
 /**
  * Persistent metadata, player transform, and hotbar inventory saved to `saves/<world>/level.json`.
  */
+@JsonClass(generateAdapter = true)
 data class WorldSaveData(
     val worldName: String,
     val seed: Long,
@@ -48,6 +51,7 @@ data class WorldSaveData(
 /**
  * Serializable snapshot of an active entity stored inside `entities/c_X_Y_Z.json`.
  */
+@JsonClass(generateAdapter = true)
 data class SavedEntityData(
     val typeId: String,
     val x: Double,
@@ -62,6 +66,7 @@ data class SavedEntityData(
 /**
  * Per-chunk JSON wrapper saved at `saves/<world>/entities/c_X_Y_Z.json`.
  */
+@JsonClass(generateAdapter = true)
 data class ChunkEntityFileData(
     val chunkX: Long,
     val chunkY: Long,
@@ -72,6 +77,7 @@ data class ChunkEntityFileData(
 /**
  * Moshi-serializable representation of `:core`'s [com.nitrous.tessellate.world.TypedValue].
  */
+@JsonClass(generateAdapter = true)
 data class TypedValueJson(
     val type: String,
     val booleanValue: Boolean? = null,
@@ -104,6 +110,7 @@ data class TypedValueJson(
 /**
  * Sparse per-chunk custom block data sidecar wrapper saved at `saves/<world>/chunks/c_X_Y_Z.data`.
  */
+@JsonClass(generateAdapter = true)
 data class ChunkBlockDataFileData(
     val entries: Map<String, Map<String, TypedValueJson>> = emptyMap()
 )

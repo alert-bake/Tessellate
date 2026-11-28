@@ -13,7 +13,6 @@ import com.nitrous.tessellate.worldgen.DataDrivenWorldGenPass
 import com.nitrous.tessellate.worldgen.StructoidDefinition
 import com.nitrous.tessellate.worldgen.WorldGenRegistry
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
@@ -49,9 +48,7 @@ object RegistryBootstrap {
     @Volatile
     private var lastLoadedModSignature: String = ""
 
-    private val moshi: Moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
+    private val moshi: Moshi = Moshi.Builder().build()
 
     private val blockAdapter = moshi.adapter(BlockDefinitionJson::class.java)
     private val itemAdapter = moshi.adapter(ItemDefinitionJson::class.java)

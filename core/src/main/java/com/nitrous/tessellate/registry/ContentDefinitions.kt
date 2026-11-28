@@ -1,10 +1,12 @@
 package com.nitrous.tessellate.registry
 
 import com.squareup.moshi.Json
+import com.squareup.moshi.JsonClass
 
 /**
  * JSON schema for face texture mappings inside block definition files (under `content/blocks/`).
  */
+@JsonClass(generateAdapter = true)
 data class BlockTexturesJson(
     val all: String? = null,
     val top: String? = null,
@@ -19,6 +21,7 @@ data class BlockTexturesJson(
 /**
  * JSON schema for data-driven block definitions (under `content/blocks/`).
  */
+@JsonClass(generateAdapter = true)
 data class BlockDefinitionJson(
     val id: String,
     val hardness: Float = 1.0f,
@@ -39,6 +42,7 @@ data class BlockDefinitionJson(
 /**
  * JSON schema for data-driven item definitions (under `content/items/`).
  */
+@JsonClass(generateAdapter = true)
 data class ItemDefinitionJson(
     val id: String,
     @Json(name = "display_name") val displayName: String? = null,
@@ -50,6 +54,7 @@ data class ItemDefinitionJson(
 /**
  * JSON schema for data-driven command definitions (under `content/commands/`).
  */
+@JsonClass(generateAdapter = true)
 data class CommandDefinitionJson(
     val name: String,
     val description: String = "",
@@ -61,6 +66,7 @@ data class CommandDefinitionJson(
 /**
  * JSON schema for data-driven mod worldgen passes (under `content/worldgen/passes/`).
  */
+@JsonClass(generateAdapter = true)
 data class WorldGenPassDefinitionJson(
     val id: String,
     val priority: Int = 55,
@@ -80,6 +86,7 @@ data class WorldGenPassDefinitionJson(
 /**
  * JSON schema for Structoid macro-carving definitions (under `content/worldgen/structoids/`).
  */
+@JsonClass(generateAdapter = true)
 data class StructoidDefinitionJson(
     val id: String,
     @Json(name = "origin_chunk_x") val originChunkX: Int = 0,
@@ -94,6 +101,7 @@ data class StructoidDefinitionJson(
 /**
  * JSON schema for a single ingredient in a crafting recipe (`assets/content/recipes/`).
  */
+@JsonClass(generateAdapter = true)
 data class RecipeIngredientJson(
     val item: String,
     val count: Int = 1
@@ -102,6 +110,7 @@ data class RecipeIngredientJson(
 /**
  * JSON schema for the crafted output stack in a recipe (`assets/content/recipes/`).
  */
+@JsonClass(generateAdapter = true)
 data class RecipeResultJson(
     val item: String,
     val count: Int = 1
@@ -110,6 +119,7 @@ data class RecipeResultJson(
 /**
  * JSON schema for shapeless crafting recipes (`assets/content/recipes/`).
  */
+@JsonClass(generateAdapter = true)
 data class RecipeDefinitionJson(
     val id: String,
     val ingredients: List<RecipeIngredientJson> = emptyList(),
