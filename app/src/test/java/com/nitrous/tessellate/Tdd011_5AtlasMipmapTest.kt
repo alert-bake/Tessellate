@@ -136,6 +136,86 @@ class Tdd011_5AtlasMipmapTest {
         assertEquals(GLES30.GL_LINEAR_MIPMAP_LINEAR, TexturePipeline.ATLAS_MIN_FILTER)
         assertEquals(GLES30.GL_CLAMP_TO_EDGE, TexturePipeline.ATLAS_WRAP_MODE)
         assertEquals(2, TexturePipeline.ATLAS_PADDING)
+        assertTrue(
+            "Chunk fragment shader must use highp float to avoid greedy UV seam precision loss",
+            com.nitrous.tessellate.world.WorldRenderer.CHUNK_FRAGMENT_SHADER_SOURCE.contains("precision highp float;")
+        )
+    }
+
+    @Test
+    fun `tdd025 full atlas cell guard band extrudes edge pixels without alpha-0 black seams on grass stone dirt and glass`() {
+        val pipeline = TexturePipeline(context)
+        for ((id, _) in TexturePipeline.ATLAS_TILE_GRID) {
+            assertTrue(pipeline.loadTexture(id, TextureConstants.getAssetPath(id)))
+        }
+
+        val atlas = pipeline.createAtlasBitmap()
+
+        // Verify solid & edge-opaque blocks (including proto_grass & proto_stone whose PNG alpha < 255)
+        // extrude across the ENTIRE 32x32 cell (8px guard band) with zero alpha=0 pixels
+        val edgeOpaqueIds = listOf(
+            TextureConstants.PROTO_GRASS,
+            TextureConstants.PROTO_GRASS_SIDE,
+            TextureConstants.PROTO_DIRT,
+            TextureConstants.PROTO_STONE,
+            TextureConstants.BLOCK_STONE,
+            TextureConstants.BLOCK_COBBLESTONE,
+            TextureConstants.BLOCK_SAND,
+            TextureConstants.BLOCK_GLASS
+        )
+
+        for (id in edgeOpaqueIds) {
+            val (col, row) = TexturePipeline.ATLAS_TILE_GRID.first { it.first == id }.second
+            val src = decodeAssetBitmap(id)
+            assertExtrudedPadding(atlas, src, col, row, fullCellGuardBand = true)
+
+            val cellX = col * TexturePipeline.ATLAS_CELL_STRIDE
+            val cellY = row * TexturePipeline.ATLAS_CELL_STRIDE
+            val innerX = cellX + TexturePipeline.ATLAS_INNER_OFFSET
+            val innerY = cellY + TexturePipeline.ATLAS_INNER_OFFSET
+
+            // Simulate mipmap level 3 (8x8 box average per mip texel) on padding bands:
+            // Top/bottom/left/right guard texels must retain full opaque-level alpha (no alpha=0 bleed!)
+            for (y in cellY until cellY + TexturePipeline.ATLAS_CELL_STRIDE) {
+                for (x in cellX until cellX + TexturePipeline.ATLAS_CELL_STRIDE) {
+                    val inInner = x in innerX until (innerX + 16) && y in innerY until (innerY + 16)
+                    if (!inInner) {
+                        val alpha = Color.alpha(atlas.getPixel(x, y))
+                        assertTrue(
+                            "Tile '$id' guard pixel ($x, $y) must remain opaque (alpha=$alpha)",
+                            alpha >= 250
+                        )
+                    }
+                }
+            }
+            src.recycle()
+        }
+
+        // Verify genuinely transparent border texture (torch) naturally extrudes alpha=0 edge pixels
+        val torchCoord = TexturePipeline.ATLAS_TILE_GRID.first { it.first == TextureConstants.BLOCK_TORCH }.second
+        val torchSrc = decodeAssetBitmap(TextureConstants.BLOCK_TORCH)
+        assertExtrudedPadding(atlas, torchSrc, torchCoord.first, torchCoord.second, fullCellGuardBand = true)
+        torchSrc.recycle()
+
+        // Verify procedural leaves tile extrudes non-zero leaf alpha across entire guard band (never wiped to 0)
+        val leavesCoord = TexturePipeline.PROCEDURAL_ATLAS_TILES.first { it.first == TextureConstants.BLOCK_LEAVES }.second
+        val leavesCellX = leavesCoord.first * TexturePipeline.ATLAS_CELL_STRIDE
+        val leavesCellY = leavesCoord.second * TexturePipeline.ATLAS_CELL_STRIDE
+        val leavesInnerX = leavesCellX + TexturePipeline.ATLAS_INNER_OFFSET
+        val leavesInnerY = leavesCellY + TexturePipeline.ATLAS_INNER_OFFSET
+        for (y in leavesCellY until leavesCellY + TexturePipeline.ATLAS_CELL_STRIDE) {
+            for (x in leavesCellX until leavesCellX + TexturePipeline.ATLAS_CELL_STRIDE) {
+                val sx = (x - leavesInnerX).coerceIn(0, 15)
+                val sy = (y - leavesInnerY).coerceIn(0, 15)
+                assertEquals(
+                    "Leaves pixel at ($x, $y) must match clamped inner edge ($sx, $sy)",
+                    atlas.getPixel(leavesInnerX + sx, leavesInnerY + sy),
+                    atlas.getPixel(x, y)
+                )
+            }
+        }
+
+        atlas.recycle()
     }
 
     private fun decodeAssetBitmap(id: String) =
@@ -151,11 +231,14 @@ class Tdd011_5AtlasMipmapTest {
         atlas: android.graphics.Bitmap,
         src: android.graphics.Bitmap,
         col: Int,
-        row: Int
+        row: Int,
+        fullCellGuardBand: Boolean = false
     ) {
-        val innerX = col * TexturePipeline.ATLAS_CELL_STRIDE + TexturePipeline.ATLAS_INNER_OFFSET
-        val innerY = row * TexturePipeline.ATLAS_CELL_STRIDE + TexturePipeline.ATLAS_INNER_OFFSET
-        val pad = TexturePipeline.ATLAS_PADDING
+        val cellX = col * TexturePipeline.ATLAS_CELL_STRIDE
+        val cellY = row * TexturePipeline.ATLAS_CELL_STRIDE
+        val innerX = cellX + TexturePipeline.ATLAS_INNER_OFFSET
+        val innerY = cellY + TexturePipeline.ATLAS_INNER_OFFSET
+        val pad = if (fullCellGuardBand) TexturePipeline.ATLAS_INNER_OFFSET else TexturePipeline.ATLAS_PADDING
 
         // Inner pixels match source verbatim
         for (y in 0 until 16) {
@@ -164,7 +247,7 @@ class Tdd011_5AtlasMipmapTest {
             }
         }
 
-        // Top & bottom 2px padding extrude row 0 and row 15
+        // Top & bottom padding extrude row 0 and row 15
         for (p in 1..pad) {
             for (x in 0 until 16) {
                 assertEquals(src.getPixel(x, 0), atlas.getPixel(innerX + x, innerY - p))
@@ -172,7 +255,7 @@ class Tdd011_5AtlasMipmapTest {
             }
         }
 
-        // Left & right 2px padding extrude col 0 and col 15
+        // Left & right padding extrude col 0 and col 15
         for (p in 1..pad) {
             for (y in 0 until 16) {
                 assertEquals(src.getPixel(0, y), atlas.getPixel(innerX - p, innerY + y))
@@ -180,7 +263,7 @@ class Tdd011_5AtlasMipmapTest {
             }
         }
 
-        // 2x2 corners extrude corner pixels
+        // Corner padding regions extrude corner pixels
         for (py in 1..pad) {
             for (px in 1..pad) {
                 assertEquals(src.getPixel(0, 0), atlas.getPixel(innerX - px, innerY - py))

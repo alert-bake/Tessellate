@@ -870,7 +870,7 @@ class WorldRenderer(
 
         val CHUNK_FRAGMENT_SHADER_SOURCE: String = """
             #version 300 es
-            precision mediump float;
+            precision highp float;
 
             in vec2 vTileUv;
             in vec4 vTileRect;

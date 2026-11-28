@@ -379,15 +379,9 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
             scaledSource.recycle()
         }
 
-        val hasTransparency = srcPixels.any { Color.alpha(it) < 255 }
-
         // Copy inner 16x16 pixels verbatim
         atlas.setPixels(srcPixels, 0, w, innerX, innerY, w, h)
 
-        val minPadX = innerX - ATLAS_PADDING
-        val maxPadX = innerX + w + ATLAS_PADDING - 1
-        val minPadY = innerY - ATLAS_PADDING
-        val maxPadY = innerY + h + ATLAS_PADDING - 1
         val cellEndX = cellX + ATLAS_CELL_STRIDE
         val cellEndY = cellY + ATLAS_CELL_STRIDE
 
@@ -398,16 +392,7 @@ class TexturePipeline(private val context: Context) : ITexturePipeline, ChunkMes
                 }
                 val sx = (ax - innerX).coerceIn(0, w - 1)
                 val sy = (ay - innerY).coerceIn(0, h - 1)
-                val edgePixel = srcPixels[sy * w + sx]
-
-                val in2PxPadding = ax in minPadX..maxPadX && ay in minPadY..maxPadY
-                val outPixel = if (in2PxPadding || !hasTransparency) {
-                    edgePixel
-                } else {
-                    // Preserve edge RGB with alpha=0 in outer transparent guard pixels to avoid dark fringes
-                    edgePixel and 0x00FFFFFF
-                }
-                atlas.setPixel(ax, ay, outPixel)
+                atlas.setPixel(ax, ay, srcPixels[sy * w + sx])
             }
         }
     }
